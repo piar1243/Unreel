@@ -72,7 +72,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun WeLiveApp() {
+fun UnreelApp() {
     val context = LocalContext.current
     val repository = remember { UserRulesRepository(context.applicationContext) }
     val trainingRepository = remember { TrainingDataRepository(context.applicationContext) }

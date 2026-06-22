@@ -15,12 +15,12 @@
         android:label="@string/app_name"
         android:roundIcon="@mipmap/unreel_launcher_round"
         android:supportsRtl="true"
-        android:theme="@style/Theme.WeLive">
+        android:theme="@style/Theme.Unreel">
         <activity
             android:name=".MainActivity"
             android:exported="true"
             android:label="@string/app_name"
-            android:theme="@style/Theme.WeLive">
+            android:theme="@style/Theme.Unreel">
             <intent-filter>
                 <action android:name="android.intent.action.MAIN" />
 
@@ -29,7 +29,7 @@
         </activity>
 
         <service
-            android:name=".accessibility.WeLiveAccessibilityService"
+            android:name=".accessibility.UnreelAccessibilityService"
             android:exported="true"
             android:label="@string/accessibility_service_label"
             android:permission="android.permission.BIND_ACCESSIBILITY_SERVICE">
@@ -39,7 +39,7 @@
 
             <meta-data
                 android:name="android.accessibilityservice"
-                android:resource="@xml/welive_accessibility_service" />
+                android:resource="@xml/unreel_accessibility_service" />
         </service>
     </application>
 

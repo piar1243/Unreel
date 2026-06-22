@@ -5,12 +5,12 @@ import android.media.AudioManager
 
 class HomeFeedAudioController(context: Context) {
     private val audioManager = context.getSystemService(AudioManager::class.java)
-    private var mutedByWeLive = false
+    private var mutedByUnreel = false
     private var wasMutedBeforeBlock = false
 
     fun muteHomeFeed() {
         val manager = audioManager ?: return
-        if (mutedByWeLive) return
+        if (mutedByUnreel) return
 
         wasMutedBeforeBlock = manager.isStreamMute(AudioManager.STREAM_MUSIC)
         runCatching {
@@ -20,12 +20,12 @@ class HomeFeedAudioController(context: Context) {
                 0
             )
         }
-        mutedByWeLive = true
+        mutedByUnreel = true
     }
 
     fun restore() {
         val manager = audioManager ?: return
-        if (!mutedByWeLive) return
+        if (!mutedByUnreel) return
 
         if (!wasMutedBeforeBlock) {
             runCatching {
@@ -36,7 +36,7 @@ class HomeFeedAudioController(context: Context) {
                 )
             }
         }
-        mutedByWeLive = false
+        mutedByUnreel = false
         wasMutedBeforeBlock = false
     }
 }
