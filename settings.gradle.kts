@@ -19,6 +19,6 @@ dependencyResolutionManagement {
     }
 }
 
-rootProject.name = "WeLive"
+rootProject.name = "Unreel"
 include(":app")
  
