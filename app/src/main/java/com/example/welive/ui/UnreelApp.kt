@@ -2,13 +2,15 @@ package com.example.welive.ui
 
 import android.content.Intent
 import android.provider.Settings
+<<<<<<< HEAD:app/src/main/java/com/example/welive/ui/WeLiveApp.kt
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
+=======
+>>>>>>> 50e6c0991e5f361964e88ee4590d9e89c4334699:app/src/main/java/com/example/welive/ui/UnreelApp.kt
 import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -21,7 +23,6 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -53,6 +54,7 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+<<<<<<< HEAD:app/src/main/java/com/example/welive/ui/WeLiveApp.kt
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
@@ -61,6 +63,13 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+=======
+import androidx.compose.ui.res.painterResource
+import androidx.compose.ui.text.font.FontWeight
+import androidx.compose.ui.text.style.TextOverflow
+import androidx.compose.ui.unit.dp
+import com.example.welive.R
+>>>>>>> 50e6c0991e5f361964e88ee4590d9e89c4334699:app/src/main/java/com/example/welive/ui/UnreelApp.kt
 import com.example.welive.detection.DetectionResult
 import com.example.welive.detection.InterventionAction
 import com.example.welive.detection.WindowSnapshot
@@ -90,7 +99,7 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun WeLiveApp() {
+fun UnreelApp() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val repository = remember { UserRulesRepository(context.applicationContext) }
@@ -627,17 +636,6 @@ private fun Header(settings: AppSettings) {
         animationSpec = tween(durationMillis = 520),
         label = "protection_intensity"
     )
-    val transition = rememberInfiniteTransition(label = "scan_motion")
-    val scanOffset by transition.animateFloat(
-        initialValue = 0f,
-        targetValue = 54f,
-        animationSpec = infiniteRepeatable(
-            animation = tween(durationMillis = 1800),
-            repeatMode = RepeatMode.Reverse
-        ),
-        label = "scan_offset"
-    )
-
     Column(
         modifier = Modifier
             .fillMaxWidth()
@@ -654,12 +652,12 @@ private fun Header(settings: AppSettings) {
                     .background(Graphite)
                     .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
             ) {
-                Box(
+                Image(
+                    painter = painterResource(id = R.drawable.unreel_logo_mark),
+                    contentDescription = null,
                     modifier = Modifier
-                        .fillMaxWidth()
-                        .height(4.dp)
-                        .offset(y = scanOffset.dp)
-                        .background(SignalGreen.copy(alpha = activeTarget))
+                        .fillMaxSize()
+                        .padding(5.dp)
                 )
             }
             Column {
@@ -669,7 +667,7 @@ private fun Header(settings: AppSettings) {
                     style = MaterialTheme.typography.headlineLarge
                 )
                 Text(
-                    text = "Instagram Reels shield",
+                    text = "Shortform shield",
                     color = Steel,
                     style = MaterialTheme.typography.bodyLarge
                 )

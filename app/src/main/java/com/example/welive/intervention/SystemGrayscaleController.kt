@@ -6,12 +6,12 @@ import android.provider.Settings
 class SystemGrayscaleController(
     private val context: Context
 ) {
-    private var appliedByWeLive = false
+    private var appliedByUnreel = false
     private var previousEnabled: Int? = null
     private var previousDaltonizer: Int? = null
 
     fun enable() {
-        if (appliedByWeLive) return
+        if (appliedByUnreel) return
         previousEnabled = getSecureInt(ACCESSIBILITY_DISPLAY_DALTONIZER_ENABLED, 0)
         previousDaltonizer = getSecureInt(ACCESSIBILITY_DISPLAY_DALTONIZER, DALTONIZER_DISABLED)
 
@@ -23,11 +23,11 @@ class SystemGrayscaleController(
             Settings.Secure.putInt(resolver, ACCESSIBILITY_DISPLAY_DALTONIZER, DALTONIZER_SIMULATE_MONOCHROMACY)
         }.getOrDefault(false)
 
-        appliedByWeLive = enabled && mode
+        appliedByUnreel = enabled && mode
     }
 
     fun restore() {
-        if (!appliedByWeLive) return
+        if (!appliedByUnreel) return
         val resolver = context.contentResolver
         runCatching {
             Settings.Secure.putInt(
@@ -41,7 +41,7 @@ class SystemGrayscaleController(
                 previousDaltonizer ?: DALTONIZER_DISABLED
             )
         }
-        appliedByWeLive = false
+        appliedByUnreel = false
         previousEnabled = null
         previousDaltonizer = null
     }

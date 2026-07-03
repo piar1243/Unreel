@@ -34,7 +34,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-class WeLiveAccessibilityService : AccessibilityService() {
+class UnreelAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var settingsRepository: UserRulesRepository
@@ -171,8 +171,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
             return
         }
 
-        val isWeLiveEvent = eventPackageName == packageName || rootPackageName == packageName
-        if (isWeLiveEvent && !eventClassName.contains("MainActivity")) {
+        val isUnreelEvent = eventPackageName == packageName || rootPackageName == packageName
+        if (isUnreelEvent && !eventClassName.contains("MainActivity")) {
             return
         }
 
@@ -232,10 +232,10 @@ class WeLiveAccessibilityService : AccessibilityService() {
             rootPackageName == InstagramPackageConfig.PACKAGE_NAME
 
         if (!instagramIsActive) {
-            val isWeLiveOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
+            val isUnreelOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
                 !eventClassName.contains("MainActivity")
             val isSystemEvent = eventPackageName == SYSTEM_UI_PACKAGE || rootPackageName == SYSTEM_UI_PACKAGE
-            if (!isWeLiveOverlayEvent && !isSystemEvent) {
+            if (!isUnreelOverlayEvent && !isSystemEvent) {
                 nativeInstagramSessionActiveForOpenLimit = false
             }
             return false
@@ -300,7 +300,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private fun openAppSettings() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(Settings.EXTRA_SETTINGS_EMBEDDED_DEEP_LINK_INTENT_URI, "welive://settings")
+            putExtra(Settings.EXTRA_SETTINGS_EMBEDDED_DEEP_LINK_INTENT_URI, "unreel://settings")
         }
         startActivity(intent)
     }
