@@ -58,22 +58,14 @@ class InstagramHomeFeedClassifier {
             }
         }
 
-        fun selectedTabId(): String? {
-            val selectedTabIds = visibleNodes
-                .filter { node -> node.isSelected }
-                .mapNotNull { node ->
-                    node.viewId
-                        ?.lowercase()
-                        ?.substringAfterLast('/')
-                        ?.takeIf { id -> id in BOTTOM_NAV_TAB_IDS }
-                }
-                .distinct()
-            return selectedTabIds.firstOrNull { id -> id != "feed_tab" }
-                ?: selectedTabIds.firstOrNull()
+        fun visibleLabelNeedleCount(vararg needles: String): Int {
+            return needles.count { needle ->
+                visibleDescriptions.any { it == needle || it.contains(needle) } ||
+                    visibleTexts.any { it == needle || it.contains(needle) }
+            }
         }
 
         val reasons = mutableListOf<String>()
-        val selectedTabId = selectedTabId()
         val hasVisibleClipsViewer = hasVisibleId(
             "clips_viewer_view_pager",
             "clips_ufi_component",
@@ -144,6 +136,35 @@ class InstagramHomeFeedClassifier {
             hasVisibleId("clips_grid_recyclerview") ||
                 hasVisibleLabel("grid view", "posts", "reposted")
             )
+        val visiblePostCreatorMarkerCount = visibleIdNeedleCount(
+            "gallery_container_coordinator",
+            "gallery_coordinator",
+            "gallery_recycler_view",
+            "gallery_grid_item_thumbnail",
+            "new_post_title",
+            "gallery_folder_menu",
+            "crop_image_view",
+            "croptype_toggle_button",
+            "cam_dest_feed",
+            "cam_dest_story",
+            "cam_dest_clips",
+            "cam_dest_live"
+        )
+        val hasVisiblePostCreatorSurface = visiblePostCreatorMarkerCount >= 3 && (
+            hasVisibleId(
+                "gallery_recycler_view",
+                "gallery_grid_item_thumbnail",
+                "gallery_container_coordinator",
+                "gallery_coordinator",
+                "new_post_title",
+                "crop_image_view"
+            ) || hasVisibleId(
+                "cam_dest_feed",
+                "cam_dest_story",
+                "cam_dest_clips",
+                "cam_dest_live"
+            )
+        )
         val hasVisibleFollowingTitleMarker = hasVisibleLabel("following") &&
             hasVisibleId("action_bar_title", "action_bar_button_back") &&
             !hasVisibleLabel("followers", "edit profile")
@@ -160,6 +181,13 @@ class InstagramHomeFeedClassifier {
         )
         val hasVisibleHomeTitleMarker = hasVisibleId("title_logo", "action_bar_title_view") ||
             hasVisibleLabel("instagram home feed")
+        val homeTopChromeMarkerCount = visibleIdNeedleCount(
+            "title_logo",
+            "action_bar_title_view",
+            "notification"
+        ) + visibleLabelNeedleCount(
+            "instagram home feed"
+        )
         val hasVisibleStoriesTray = hasVisibleId(
             "outer_container",
             "avatar_image_view",
@@ -168,6 +196,19 @@ class InstagramHomeFeedClassifier {
             "reels tray container",
             "open story"
         )
+        val storyTrayMarkerCount = visibleIdNeedleCount(
+            "outer_container",
+            "avatar_image_view",
+            "reel_empty_badge",
+            "cf_hub_recycler_view"
+        ) + visibleLabelNeedleCount(
+            "reels tray container",
+            "open story",
+            "unseen.",
+            "story,"
+        )
+        val hasStableStoriesTray = storyTrayMarkerCount >= 3
+        val hasStableHomeTopChrome = hasVisibleHomeTitleMarker && homeTopChromeMarkerCount >= 2
         val visibleLegacyFeedMarkerCount = visibleIdNeedleCount(
             "row_feed_view_group_buttons",
             "row_feed_button_like",
@@ -196,6 +237,9 @@ class InstagramHomeFeedClassifier {
         val hasVisibleFeedSurface = hasVisibleFeedBody &&
             hasVisibleHomeShell &&
             (hasStrongFeedBody || hasVisibleStoriesTray || hasVisibleHomeTitleMarker)
+        val hasStableHomeChromeSurface = hasVisibleHomeShell &&
+            hasStableHomeTopChrome &&
+            hasStableStoriesTray
 
         if (hasVisibleClipsViewer) {
             reasons += "Visible clips viewer markers are active"
@@ -251,29 +295,20 @@ class InstagramHomeFeedClassifier {
             )
         }
 
+        if (hasVisiblePostCreatorSurface) {
+            reasons += "Visible post creator gallery markers are active"
+            return InstagramHomeFeedClassification(
+                state = InstagramHomeFeedState.OTHER_SURFACE,
+                confidence = 0.97f,
+                reasons = reasons
+            )
+        }
+
         if (hasVisibleSearchGridShell) {
             reasons += "Visible search or explore markers are active"
             return InstagramHomeFeedClassification(
                 state = InstagramHomeFeedState.OTHER_SURFACE,
                 confidence = 0.95f,
-                reasons = reasons
-            )
-        }
-
-        if (selectedTabId != null && selectedTabId != "feed_tab") {
-            reasons += "Selected bottom navigation tab is $selectedTabId"
-            return InstagramHomeFeedClassification(
-                state = InstagramHomeFeedState.OTHER_SURFACE,
-                confidence = 0.99f,
-                reasons = reasons
-            )
-        }
-
-        if (selectedTabId == "feed_tab") {
-            reasons += "Selected bottom navigation tab is feed_tab"
-            return InstagramHomeFeedClassification(
-                state = InstagramHomeFeedState.HOME_FEED,
-                confidence = 0.99f,
                 reasons = reasons
             )
         }
@@ -287,6 +322,15 @@ class InstagramHomeFeedClassifier {
             return InstagramHomeFeedClassification(
                 state = InstagramHomeFeedState.HOME_FEED,
                 confidence = if (hasStrongFeedBody) 0.96f else 0.88f,
+                reasons = reasons
+            )
+        }
+
+        if (hasStableHomeChromeSurface) {
+            reasons += "Visible home top chrome and story tray markers are active"
+            return InstagramHomeFeedClassification(
+                state = InstagramHomeFeedState.HOME_FEED,
+                confidence = 0.93f,
                 reasons = reasons
             )
         }
@@ -336,12 +380,5 @@ class InstagramHomeFeedClassifier {
         const val MIN_SCREEN_HEIGHT = 480
         const val MAX_REASONABLE_SCREEN_WIDTH = 1600
         const val MAX_REASONABLE_SCREEN_HEIGHT = 3200
-        val BOTTOM_NAV_TAB_IDS = setOf(
-            "feed_tab",
-            "search_tab",
-            "clips_tab",
-            "direct_tab",
-            "profile_tab"
-        )
     }
 }

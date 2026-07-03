@@ -1,5 +1,5 @@
 <resources>
-    <string name="app_name">WeLive</string>
-    <string name="accessibility_service_label">WeLive shortform blocker</string>
+    <string name="app_name">Unreel</string>
+    <string name="accessibility_service_label">Unreel shortform blocker</string>
     <string name="accessibility_service_description">Detects shortform surfaces and blocks Instagram Reels when enabled.</string>
 </resources>

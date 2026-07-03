@@ -26,6 +26,7 @@ import com.example.welive.intervention.SystemGrayscaleController
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.UserRulesRepository
 import java.time.LocalDate
+import java.time.ZonedDateTime
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.SupervisorJob
@@ -46,7 +47,9 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private var currentSettings = AppSettings()
     private var nativeInstagramVisibleForGrayscale = false
     private var nativeInstagramSessionActiveForOpenLimit = false
+    private var nativeInstagramSessionActiveForHomePreload = false
     private var lastOpenLimitReturnAt = 0L
+    private var lastScheduleReturnAt = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
@@ -107,10 +110,15 @@ class WeLiveAccessibilityService : AccessibilityService() {
     override fun onAccessibilityEvent(event: AccessibilityEvent?) {
         if (event == null || !::eventRouter.isInitialized) return
         val root = rootForEvent(event)
+        if (enforceInstagramAccessSchedule(event, root)) {
+            systemGrayscaleController.restore()
+            return
+        }
         if (enforceInstagramOpenLimit(event, root)) {
             systemGrayscaleController.restore()
             return
         }
+        preloadHomeFeedBlockOnInstagramOpen(event, root)
         updateInstagramGrayscale(event, root)
         eventRouter.onEvent(
             event = event,
@@ -176,6 +184,43 @@ class WeLiveAccessibilityService : AccessibilityService() {
         systemGrayscaleController.restore()
     }
 
+    private fun preloadHomeFeedBlockOnInstagramOpen(
+        event: AccessibilityEvent,
+        root: AccessibilityNodeInfo?
+    ) {
+        val eventPackageName = event.packageName?.toString().orEmpty()
+        val rootPackageName = root?.packageName?.toString().orEmpty()
+        val eventClassName = event.className?.toString().orEmpty()
+        val instagramIsActive = eventPackageName == InstagramPackageConfig.PACKAGE_NAME ||
+            rootPackageName == InstagramPackageConfig.PACKAGE_NAME
+
+        if (instagramIsActive) {
+            if (!nativeInstagramSessionActiveForHomePreload) {
+                nativeInstagramSessionActiveForHomePreload = true
+                val settings = currentSettings
+                if (
+                    settings.blockInstagramHomeFeed &&
+                    settings.preloadHomeFeedBlockOnInstagramOpen &&
+                    !settings.isTemporarilyAllowed()
+                ) {
+                    eventRouter.showProvisionalHomeFeedBlock(
+                        event = event,
+                        root = root,
+                        blockStories = settings.blockInstagramHomeStories
+                    )
+                }
+            }
+            return
+        }
+
+        val isWeLiveOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
+            !eventClassName.contains("MainActivity")
+        val isSystemEvent = eventPackageName == SYSTEM_UI_PACKAGE || rootPackageName == SYSTEM_UI_PACKAGE
+        if (!isWeLiveOverlayEvent && !isSystemEvent) {
+            nativeInstagramSessionActiveForHomePreload = false
+        }
+    }
+
     private fun enforceInstagramOpenLimit(
         event: AccessibilityEvent,
         root: AccessibilityNodeInfo?
@@ -218,6 +263,35 @@ class WeLiveAccessibilityService : AccessibilityService() {
         val now = System.currentTimeMillis()
         if (now - lastOpenLimitReturnAt > OPEN_LIMIT_RETURN_COOLDOWN_MS) {
             lastOpenLimitReturnAt = now
+            performGlobalAction(GLOBAL_ACTION_HOME)
+        }
+        return true
+    }
+
+    private fun enforceInstagramAccessSchedule(
+        event: AccessibilityEvent,
+        root: AccessibilityNodeInfo?
+    ): Boolean {
+        val eventPackageName = event.packageName?.toString().orEmpty()
+        val rootPackageName = root?.packageName?.toString().orEmpty()
+        val instagramIsActive = eventPackageName == InstagramPackageConfig.PACKAGE_NAME ||
+            rootPackageName == InstagramPackageConfig.PACKAGE_NAME
+        if (!instagramIsActive) {
+            return false
+        }
+
+        val settings = currentSettings
+        if (!settings.limitInstagramToSchedule || settings.isTemporarilyAllowed()) {
+            return false
+        }
+
+        if (settings.isWithinInstagramSchedule(ZonedDateTime.now())) {
+            return false
+        }
+
+        val now = System.currentTimeMillis()
+        if (now - lastScheduleReturnAt > SCHEDULE_RETURN_COOLDOWN_MS) {
+            lastScheduleReturnAt = now
             performGlobalAction(GLOBAL_ACTION_HOME)
         }
         return true
@@ -357,6 +431,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private companion object {
         const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         const val OPEN_LIMIT_RETURN_COOLDOWN_MS = 750L
+        const val SCHEDULE_RETURN_COOLDOWN_MS = 750L
         const val HOME_NAVIGATION_SUPPRESSION_MS = 450L
         const val STORY_OPEN_SUPPRESSION_MS = 1_500L
         val NAVIGATION_RECHECK_DELAYS_MS = longArrayOf(24L, 64L, 120L, 220L, 360L, 600L, 900L)

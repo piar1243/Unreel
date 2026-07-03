@@ -198,7 +198,11 @@ class HomeFeedOverlayController(
         val blockerRegion = currentBlockerRegion ?: return null
         if (!region.contains(x, y)) return null
 
-        if (y > blockerRegion.bottom) {
+        if (y < TOP_APP_BAR_PASSTHROUGH_DP.dp()) {
+            return TransparentTapKind.Navigation
+        }
+
+        if (y > blockerRegion.bottom || y > region.bottom - BOTTOM_NAV_PASSTHROUGH_DP.dp()) {
             return TransparentTapKind.Navigation
         }
 
@@ -243,7 +247,12 @@ class HomeFeedOverlayController(
     ) {
         onTransparentBandTapStarted(isNavigationBand)
         setTouchPassthrough(true)
-        handler.postDelayed({ onStoryGestureTap(x, y) }, STORY_TAP_REPLAY_DELAY_MS)
+        val replayDelay = if (isNavigationBand) {
+            NAVIGATION_TAP_REPLAY_DELAY_MS
+        } else {
+            STORY_TAP_REPLAY_DELAY_MS
+        }
+        handler.postDelayed({ onStoryGestureTap(x, y) }, replayDelay)
         restoreTouchBlocking?.let(handler::removeCallbacks)
         val restoreRunnable = Runnable {
             setTouchPassthrough(false)
@@ -287,7 +296,10 @@ class HomeFeedOverlayController(
 
     private companion object {
         const val STORY_TAP_REPLAY_DELAY_MS = 24L
+        const val NAVIGATION_TAP_REPLAY_DELAY_MS = 48L
         const val STORY_TAP_RESTORE_DELAY_MS = 220L
+        const val TOP_APP_BAR_PASSTHROUGH_DP = 64
+        const val BOTTOM_NAV_PASSTHROUGH_DP = 96
     }
 
     private enum class TransparentTapKind {

@@ -47,12 +47,14 @@ class AccessibilityEventRouter(
     private var reverseCooldownUntil = 0L
     private var reverseArmed = true
     private var lastInstagramNavigationAt = 0L
+    private var lastHomeTabNavigationAt = 0L
     private var lastHomeFeedSeenAt = 0L
     private var homeFeedSuppressedUntil = 0L
     private var lastInstagramWebBlockAt = 0L
     private var cachedHomeFeedRegion: ScreenRegion? = null
     private var cachedHomeFeedBlockerRegion: ScreenRegion? = null
     private var cachedHomeFeedStoryTapTargets: List<ScreenRegion> = emptyList()
+    private var homeFeedBlockNeedsFreshGeometry = false
 
     fun suppressHomeFeedOverlayFor(durationMillis: Long) {
         HomeDebugRecorder.recordExternal(
@@ -62,6 +64,39 @@ class AccessibilityEventRouter(
         homeFeedSuppressedUntil = System.currentTimeMillis() + durationMillis
         lastHomeFeedSeenAt = 0L
         clearHomeFeedBlock()
+    }
+
+    fun showProvisionalHomeFeedBlock(
+        event: AccessibilityEvent,
+        root: AccessibilityNodeInfo?,
+        blockStories: Boolean
+    ) {
+        val now = System.currentTimeMillis()
+        val snapshot = snapshotReader.read(event, root)
+        HomeDebugRecorder.recordExternal(
+            decision = "preload_home_block_on_instagram_open",
+            extras = mapOf(
+                "blockStories" to blockStories,
+                "hasSnapshot" to (snapshot != null),
+                "hasCachedRegion" to (cachedHomeFeedRegion != null)
+            )
+        )
+        clearInstagramWebBlock()
+        clearFullScreenBlockState(immediateOverlayDismiss = true)
+        homeFeedSuppressedUntil = 0L
+        lastHomeFeedSeenAt = now
+        homeFeedBlockNeedsFreshGeometry = true
+        homeFeedAudioController.muteHomeFeed()
+
+        if (snapshot != null) {
+            showHomeFeedBlock(snapshot, blockStories)
+            if (homeFeedOverlayController.isShowing) {
+                homeFeedOverlayController.holdSolid()
+                return
+            }
+        }
+
+        showCachedHomeFeedBlock(blockStories, now)
     }
 
     fun onEvent(
@@ -121,6 +156,7 @@ class AccessibilityEventRouter(
         }
         val homeFeedEnterNavigationEvent = instagramIsActive && event.isHomeFeedEnterNavigationEvent()
         if (homeFeedEnterNavigationEvent) {
+            lastHomeTabNavigationAt = now
             recordHomeDebug("fast_event", "clear_home_suppression_home_tab_event", event, rootPackageName)
             homeFeedSuppressedUntil = 0L
         }
@@ -137,7 +173,8 @@ class AccessibilityEventRouter(
         if (
             instagramIsActive &&
             settings.blockInstagramHomeFeed &&
-            event.isHomeFeedExitNavigationEvent()
+            event.isHomeFeedExitNavigationEvent() &&
+            now - lastHomeTabNavigationAt > HOME_FEED_RETURN_GUARD_WINDOW_MS
         ) {
             recordHomeDebug("fast_event", "suppress_home_exit_navigation_event", event, rootPackageName)
             homeFeedSuppressedUntil = now + HOME_FEED_EXIT_NAVIGATION_SUPPRESSION_MS
@@ -246,7 +283,14 @@ class AccessibilityEventRouter(
                 homeFeedClassification.state == InstagramHomeFeedState.UNKNOWN &&
                     result.surface == ContentSurface.INSTAGRAM_HOME_FEED
                 )
-        val homeFeedShouldBlock = instagramIsActive && settings.blockInstagramHomeFeed && homeFeedDetected
+        val clearNonHomeInstagramSurface = instagramIsActive && (
+            homeFeedClassification.state == InstagramHomeFeedState.FOLLOWING_TAB ||
+                homeFeedClassification.state == InstagramHomeFeedState.OTHER_SURFACE ||
+                result.surface in HOME_FEED_CLEAR_SURFACES
+            )
+        val homeFeedShouldBlock = instagramIsActive &&
+            settings.blockInstagramHomeFeed &&
+            !clearNonHomeInstagramSurface
         recordHomeDebug(
             phase = "classification",
             decision = "classified",
@@ -258,6 +302,7 @@ class AccessibilityEventRouter(
             extras = mapOf(
                 "homeFeedDetected" to homeFeedDetected,
                 "homeFeedShouldBlock" to homeFeedShouldBlock,
+                "clearNonHomeInstagramSurface" to clearNonHomeInstagramSurface,
                 "reelsShouldBlock" to reelsShouldBlock,
                 "searchGridShouldBlock" to searchGridShouldBlock,
                 "webShouldBlock" to webShouldBlock,
@@ -388,7 +433,11 @@ class AccessibilityEventRouter(
         if (homeFeedShouldBlock) {
             recordHomeDebug(
                 phase = "decision",
-                decision = "show_home_feed_block",
+                decision = if (homeFeedDetected) {
+                    "show_home_feed_block"
+                } else {
+                    "show_guarded_default_home_block"
+                },
                 event = event,
                 rootPackageName = rootPackageName,
                 snapshot = snapshot,
@@ -523,6 +572,7 @@ class AccessibilityEventRouter(
         homeFeedOverlayController.dismiss()
         homeFeedAudioController.restore()
         lastHomeFeedSeenAt = 0L
+        homeFeedBlockNeedsFreshGeometry = false
     }
 
     private fun clearInstagramWebBlock() {
@@ -559,7 +609,11 @@ class AccessibilityEventRouter(
         snapshot: WindowSnapshot,
         blockStories: Boolean
     ) {
-        if (homeFeedOverlayController.isShowing && cachedHomeFeedRegion != null) {
+        if (
+            homeFeedOverlayController.isShowing &&
+            cachedHomeFeedRegion != null &&
+            !homeFeedBlockNeedsFreshGeometry
+        ) {
             showCachedHomeFeedBlock(blockStories, System.currentTimeMillis())
             return
         }
@@ -576,6 +630,7 @@ class AccessibilityEventRouter(
             cachedHomeFeedRegion = freshRegion
             cachedHomeFeedBlockerRegion = freshBlockerRegion
             cachedHomeFeedStoryTapTargets = freshStoryTapTargets.orEmpty()
+            homeFeedBlockNeedsFreshGeometry = false
         }
 
         val region = freshRegion ?: cachedHomeFeedRegion ?: return
@@ -699,13 +754,16 @@ class AccessibilityEventRouter(
 
         return when (eventType) {
             AccessibilityEvent.TYPE_VIEW_CLICKED -> idMatch || labelMatch
-            AccessibilityEvent.TYPE_VIEW_SELECTED -> idMatch && sourceNode?.isSelected == true
+            AccessibilityEvent.TYPE_VIEW_SELECTED -> idMatch
             else -> false
         }
     }
 
     private fun AccessibilityEvent.isHomeFeedEnterNavigationEvent(): Boolean {
-        if (eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) {
+        if (
+            eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            eventType != AccessibilityEvent.TYPE_VIEW_SELECTED
+        ) {
             return false
         }
 
@@ -745,6 +803,7 @@ class AccessibilityEventRouter(
         const val HOME_FEED_NAVIGATION_CLEAR_WINDOW_MS = 1_000L
         const val HOME_FEED_NAVIGATION_GRACE_MS = 120L
         const val HOME_FEED_EXIT_NAVIGATION_SUPPRESSION_MS = 450L
+        const val HOME_FEED_RETURN_GUARD_WINDOW_MS = 900L
         const val HOME_FEED_STORY_OPEN_SUPPRESSION_MS = 1_500L
         const val WEB_OVERLAY_SELF_EVENT_GRACE_MS = 2_500L
         val HOME_FEED_EXIT_NAVIGATION_ID_MARKERS = setOf(
@@ -776,6 +835,15 @@ class AccessibilityEventRouter(
         val HOME_FEED_STORY_OPEN_LABEL_MARKERS = setOf(
             "open story",
             "story"
+        )
+        val HOME_FEED_CLEAR_SURFACES = setOf(
+            ContentSurface.INSTAGRAM_REELS,
+            ContentSurface.INSTAGRAM_REELS_FROM_FRIEND,
+            ContentSurface.INSTAGRAM_SEARCH_REELS_GRID,
+            ContentSurface.INSTAGRAM_STORIES,
+            ContentSurface.INSTAGRAM_EXPLORE,
+            ContentSurface.INSTAGRAM_PROFILE,
+            ContentSurface.INSTAGRAM_DMS
         )
     }
 }

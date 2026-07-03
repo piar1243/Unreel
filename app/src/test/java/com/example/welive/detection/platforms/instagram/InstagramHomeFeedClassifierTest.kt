@@ -34,58 +34,6 @@ class InstagramHomeFeedClassifierTest {
     }
 
     @Test
-    fun selectedFeedTabClassifiesAsHomeFeedBeforeFeedBodyLoads() {
-        val result = classifier.classify(
-            snapshot(
-                visibleFeature("com.instagram.android:id/feed_tab", description = "home", isSelected = true),
-                visibleFeature("com.instagram.android:id/search_tab", description = "search and explore"),
-                visibleFeature("com.instagram.android:id/clips_tab", description = "reels"),
-                visibleFeature("com.instagram.android:id/direct_tab", description = "message"),
-                visibleFeature("com.instagram.android:id/profile_tab", description = "profile"),
-                visibleFeature("com.instagram.android:id/swipeable_tab_view_pager")
-            )
-        )
-
-        assertEquals(InstagramHomeFeedState.HOME_FEED, result.state)
-        assertTrue(result.reasons.any { it.contains("feed_tab") })
-    }
-
-    @Test
-    fun selectedNonHomeTabDoesNotClassifyAsHomeFeed() {
-        val result = classifier.classify(
-            snapshot(
-                visibleFeature("com.instagram.android:id/feed_tab", description = "home"),
-                visibleFeature("com.instagram.android:id/direct_tab", description = "message", isSelected = true),
-                visibleFeature("com.instagram.android:id/swipeable_tab_view_pager"),
-                visibleFeature("android:id/list"),
-                visibleFeature("com.instagram.android:id/row_feed_photo_imageview"),
-                visibleFeature("com.instagram.android:id/row_feed_profile_header")
-            )
-        )
-
-        assertEquals(InstagramHomeFeedState.OTHER_SURFACE, result.state)
-        assertTrue(result.reasons.any { it.contains("direct_tab") })
-    }
-
-    @Test
-    fun selectedNonHomeTabWinsOverStaleSelectedFeedTab() {
-        val result = classifier.classify(
-            snapshot(
-                visibleFeature("com.instagram.android:id/feed_tab", description = "home", isSelected = true),
-                visibleFeature("com.instagram.android:id/direct_tab", description = "message", isSelected = true),
-                visibleFeature("com.instagram.android:id/swipeable_tab_view_pager"),
-                visibleFeature("android:id/list"),
-                visibleFeature("com.instagram.android:id/row_feed_photo_imageview"),
-                visibleFeature("com.instagram.android:id/row_feed_profile_header"),
-                visibleFeature("com.instagram.android:id/outer_container")
-            )
-        )
-
-        assertEquals(InstagramHomeFeedState.OTHER_SURFACE, result.state)
-        assertTrue(result.reasons.any { it.contains("direct_tab") })
-    }
-
-    @Test
     fun followingTabDoesNotClassifyAsHomeFeed() {
         val result = classifier.classify(
             snapshot(
@@ -198,6 +146,49 @@ class InstagramHomeFeedClassifierTest {
     }
 
     @Test
+    fun stableTopChromeAndStoryTrayClassifyHomeBeforeFeedBodySettles() {
+        val result = classifier.classify(
+            snapshot(
+                visibleFeature("com.instagram.android:id/feed_tab", description = "home"),
+                visibleFeature("com.instagram.android:id/search_tab", description = "search and explore"),
+                visibleFeature("com.instagram.android:id/clips_tab", description = "reels"),
+                visibleFeature("com.instagram.android:id/direct_tab", description = "message"),
+                visibleFeature("com.instagram.android:id/profile_tab", description = "profile"),
+                visibleFeature("com.instagram.android:id/swipeable_tab_view_pager"),
+                visibleFeature("com.instagram.android:id/title_logo", description = "instagram home feed"),
+                visibleFeature("com.instagram.android:id/action_bar_title_view"),
+                visibleFeature("com.instagram.android:id/notification"),
+                visibleFeature("com.instagram.android:id/cf_hub_recycler_view", description = "reels tray container"),
+                visibleFeature("com.instagram.android:id/outer_container"),
+                visibleFeature("com.instagram.android:id/avatar_image_view", description = "maria's story, 1 of 18, unseen."),
+                visibleFeature("com.instagram.android:id/reel_empty_badge", description = "add to story")
+            )
+        )
+
+        assertEquals(InstagramHomeFeedState.HOME_FEED, result.state)
+        assertTrue(result.confidence >= 0.93f)
+    }
+
+    @Test
+    fun dmSurfaceStillWinsOverTopChromeAndStoryTrayMarkers() {
+        val result = classifier.classify(
+            snapshot(
+                visibleFeature("com.instagram.android:id/message_list"),
+                visibleFeature("com.instagram.android:id/message_composer_bar"),
+                visibleFeature("com.instagram.android:id/row_thread_composer_edittext", text = "message?"),
+                visibleFeature("com.instagram.android:id/title_logo", description = "instagram home feed"),
+                visibleFeature("com.instagram.android:id/notification"),
+                visibleFeature("com.instagram.android:id/cf_hub_recycler_view", description = "reels tray container"),
+                visibleFeature("com.instagram.android:id/outer_container"),
+                visibleFeature("com.instagram.android:id/avatar_image_view", description = "maria's story, 1 of 18, unseen."),
+                visibleFeature("com.instagram.android:id/feed_tab", description = "home")
+            )
+        )
+
+        assertEquals(InstagramHomeFeedState.OTHER_SURFACE, result.state)
+    }
+
+    @Test
     fun profilePostsGridDoesNotClassifyAsHomeFeed() {
         val result = classifier.classify(
             snapshot(
@@ -255,6 +246,50 @@ class InstagramHomeFeedClassifierTest {
         )
 
         assertEquals(InstagramHomeFeedState.FOLLOWING_TAB, result.state)
+    }
+
+    @Test
+    fun postCreatorDoesNotClassifyAsHomeFeed() {
+        val result = classifier.classify(
+            snapshot(
+                visibleFeature("com.instagram.android:id/cam_dest_feed", text = "post"),
+                visibleFeature("com.instagram.android:id/cam_dest_story", text = "story"),
+                visibleFeature("com.instagram.android:id/cam_dest_clips", text = "reel", isSelected = true),
+                visibleFeature("com.instagram.android:id/cam_dest_live", text = "live"),
+                visibleFeature("com.instagram.android:id/gallery_container_coordinator", bottom = 2180),
+                visibleFeature("com.instagram.android:id/gallery_recycler_view", top = 564, bottom = 2180),
+                visibleFeature(
+                    "com.instagram.android:id/gallery_grid_item_thumbnail",
+                    description = "unselected photo thumbnail created on july 2, 2026 4:45 pm",
+                    left = 5,
+                    top = 1196,
+                    right = 358,
+                    bottom = 1823
+                ),
+                visibleFeature(
+                    "com.instagram.android:id/gallery_grid_item_thumbnail",
+                    description = "unselected photo thumbnail created on july 2, 2026 4:46 pm",
+                    left = 364,
+                    top = 1196,
+                    right = 716,
+                    bottom = 1823
+                ),
+                visibleFeature(
+                    "com.instagram.android:id/gallery_grid_item_thumbnail",
+                    description = "unselected photo thumbnail created on july 2, 2026 4:56 pm",
+                    left = 722,
+                    top = 1196,
+                    right = 1075,
+                    bottom = 1823
+                ),
+                offscreenRightFeature("com.instagram.android:id/feed_tab", description = "home"),
+                offscreenRightFeature("com.instagram.android:id/title_logo", description = "instagram home feed"),
+                offscreenRightFeature("com.instagram.android:id/outer_container")
+            )
+        )
+
+        assertEquals(InstagramHomeFeedState.OTHER_SURFACE, result.state)
+        assertTrue(result.confidence >= 0.97f)
     }
 
     private fun snapshot(vararg features: WindowNodeFeature): WindowSnapshot {
