@@ -13,6 +13,7 @@ import com.example.welive.detection.platforms.instagram.InstagramHomeFeedClassif
 import com.example.welive.detection.platforms.instagram.InstagramHomeFeedState
 import com.example.welive.detection.platforms.instagram.InstagramHomeFeedRegionResolver
 import com.example.welive.detection.platforms.instagram.InstagramPackageConfig
+import com.example.welive.detection.platforms.settings.SettingsPackageConfig
 import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 import com.example.welive.diagnostics.DetectionDiagnostics
 import com.example.welive.diagnostics.HomeDebugRecorder
@@ -112,6 +113,8 @@ class AccessibilityEventRouter(
             rootPackageName == InstagramPackageConfig.PACKAGE_NAME
         val browserIsActive = BrowserPackageConfig.isSupported(packageName) ||
             BrowserPackageConfig.isSupported(rootPackageName)
+        val settingsIsActive = SettingsPackageConfig.isSupported(packageName) ||
+            SettingsPackageConfig.isSupported(rootPackageName)
         recordHomeDebug(
             phase = "event",
             decision = "received",
@@ -120,16 +123,21 @@ class AccessibilityEventRouter(
             extras = mapOf(
                 "instagramIsActive" to instagramIsActive,
                 "browserIsActive" to browserIsActive,
+                "settingsIsActive" to settingsIsActive,
                 "packageName" to packageName
             )
         )
+
+        if (settingsIsActive) {
+            recordLatestSettingsSnapshot(event, root)
+        }
 
         if (packageName == SYSTEM_UI_PACKAGE || rootPackageName == SYSTEM_UI_PACKAGE) {
             recordHomeDebug("event", "ignore_system_ui", event, rootPackageName)
             return
         }
 
-        if (!instagramIsActive && !browserIsActive) {
+        if (!instagramIsActive && !browserIsActive && !settingsIsActive) {
             if (packageName == appPackageName) {
                 if (event.className?.toString()?.contains("MainActivity") == true) {
                     recordHomeDebug("event", "clear_blockers_app_activity", event, rootPackageName)
@@ -151,7 +159,7 @@ class AccessibilityEventRouter(
             return
         }
 
-        if (event.isInstagramNavigationEvent()) {
+        if (instagramIsActive && event.isInstagramNavigationEvent()) {
             lastInstagramNavigationAt = now
         }
         val homeFeedEnterNavigationEvent = instagramIsActive && event.isHomeFeedEnterNavigationEvent()
@@ -217,6 +225,9 @@ class AccessibilityEventRouter(
         if (snapshot.rootPackageName == InstagramPackageConfig.PACKAGE_NAME) {
             TrainingCaptureState.recordInstagramSnapshot(snapshot)
         }
+        if (snapshot.isSettingsSnapshot()) {
+            TrainingCaptureState.recordSettingsSnapshot(snapshot)
+        }
         val result = detectors
             .asSequence()
             .map { detector -> detector.detect(snapshot) }
@@ -264,6 +275,9 @@ class AccessibilityEventRouter(
             result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND
         val isSearchGridSurface = result.surface == ContentSurface.INSTAGRAM_SEARCH_REELS_GRID
         val isInstagramWebSurface = result.surface == ContentSurface.INSTAGRAM_WEB
+        val isUninstallSurface = result.surface == ContentSurface.SETTINGS_UNINSTALL_UNREEL
+        val isAccessibilityBlockerSurface = result.surface == ContentSurface.SETTINGS_ACCESSIBILITY_BLOCKER
+        val isSettingsGuardSurface = isUninstallSurface || isAccessibilityBlockerSurface
         val friendReelAllowed = result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND &&
             settings.allowInstagramReelsFromFriends
         val reelsShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
@@ -276,8 +290,11 @@ class AccessibilityEventRouter(
         val webShouldBlock = result.recommendedAction == InterventionAction.BLOCK &&
             isInstagramWebSurface &&
             settings.blockInstagramWebsite
+        val settingsGuardShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
+            isSettingsGuardSurface &&
+            settings.protectAppUninstall
         val nativeShouldBlock = reelsShouldBlock || searchGridShouldBlock
-        val shouldBlock = nativeShouldBlock || webShouldBlock
+        val shouldBlock = nativeShouldBlock || webShouldBlock || settingsGuardShouldBlock
         val homeFeedDetected = homeFeedClassification.state == InstagramHomeFeedState.HOME_FEED ||
             (
                 homeFeedClassification.state == InstagramHomeFeedState.UNKNOWN &&
@@ -306,6 +323,7 @@ class AccessibilityEventRouter(
                 "reelsShouldBlock" to reelsShouldBlock,
                 "searchGridShouldBlock" to searchGridShouldBlock,
                 "webShouldBlock" to webShouldBlock,
+                "settingsGuardShouldBlock" to settingsGuardShouldBlock,
                 "nativeShouldBlock" to nativeShouldBlock,
                 "homeFeedSuppressedUntilDelta" to (homeFeedSuppressedUntil - now),
                 "lastHomeFeedSeenAge" to if (lastHomeFeedSeenAt == 0L) -1L else now - lastHomeFeedSeenAt
@@ -313,14 +331,42 @@ class AccessibilityEventRouter(
         )
 
         val blockTitle = when {
+            isAccessibilityBlockerSurface -> "Permission Change Blocked"
+            isUninstallSurface -> "Uninstall Blocked"
             isInstagramWebSurface -> "Instagram Website Blocked"
             isSearchGridSurface -> "Search Grid Blocked"
             else -> "Reels Blocked"
         }
         val blockBody = when {
+            isAccessibilityBlockerSurface -> "Unreel protected its accessibility permission."
+            isUninstallSurface -> "Unreel protected itself from being removed."
             isInstagramWebSurface -> "Instagram web is blocked."
             isSearchGridSurface -> "You chose to keep this search space clear."
             else -> "You chose to keep this space clear."
+        }
+
+        if (settingsGuardShouldBlock) {
+            recordHomeDebug(
+                phase = "decision",
+                decision = if (isAccessibilityBlockerSurface) {
+                    "block_accessibility_permission_surface"
+                } else {
+                    "block_uninstall_surface"
+                },
+                event = event,
+                rootPackageName = rootPackageName,
+                snapshot = snapshot,
+                detectorResult = result,
+                homeFeedClassification = homeFeedClassification
+            )
+            clearInstagramWebBlock()
+            clearHomeFeedBlock()
+            overlayController.pulseBlocked(
+                onCovered = { performBack() },
+                title = blockTitle,
+                body = blockBody
+            )
+            return
         }
 
         if ((reelsShouldBlock || searchGridShouldBlock) && settings.reverseFromReel) {
@@ -603,6 +649,22 @@ class AccessibilityEventRouter(
             webOverlayShowing = instagramWebOverlayController.isShowing,
             extras = extras
         )
+    }
+
+    private fun recordLatestSettingsSnapshot(
+        event: AccessibilityEvent,
+        root: AccessibilityNodeInfo?
+    ) {
+        val snapshot = snapshotReader.read(event, root) ?: return
+        if (snapshot.isSettingsSnapshot()) {
+            TrainingCaptureState.recordSettingsSnapshot(snapshot)
+        }
+    }
+
+    private fun WindowSnapshot.isSettingsSnapshot(): Boolean {
+        return SettingsPackageConfig.isSupported(packageName) ||
+            SettingsPackageConfig.isSupported(rootPackageName) ||
+            SettingsPackageConfig.isSupported(eventPackageName)
     }
 
     private fun showHomeFeedBlock(

@@ -1,16 +1,20 @@
 package com.example.welive.ui
 
+import android.app.Activity
+import android.app.KeyguardManager
 import android.content.Intent
+import android.content.Context
+import android.content.ContextWrapper
 import android.provider.Settings
-<<<<<<< HEAD:app/src/main/java/com/example/welive/ui/WeLiveApp.kt
+import androidx.activity.compose.rememberLauncherForActivityResult
+import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.animation.core.RepeatMode
 import androidx.compose.animation.core.animateFloat
-=======
->>>>>>> 50e6c0991e5f361964e88ee4590d9e89c4334699:app/src/main/java/com/example/welive/ui/UnreelApp.kt
 import androidx.compose.animation.core.animateFloatAsState
+import androidx.compose.animation.core.infiniteRepeatable
+import androidx.compose.animation.core.rememberInfiniteTransition
 import androidx.compose.animation.core.tween
-import androidx.compose.foundation.Image
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
@@ -23,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -54,7 +59,6 @@ import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
-<<<<<<< HEAD:app/src/main/java/com/example/welive/ui/WeLiveApp.kt
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
@@ -63,19 +67,14 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
-=======
-import androidx.compose.ui.res.painterResource
-import androidx.compose.ui.text.font.FontWeight
-import androidx.compose.ui.text.style.TextOverflow
-import androidx.compose.ui.unit.dp
-import com.example.welive.R
->>>>>>> 50e6c0991e5f361964e88ee4590d9e89c4334699:app/src/main/java/com/example/welive/ui/UnreelApp.kt
 import com.example.welive.detection.DetectionResult
 import com.example.welive.detection.InterventionAction
 import com.example.welive.detection.WindowSnapshot
 import com.example.welive.diagnostics.DetectionDiagnostics
 import com.example.welive.diagnostics.HomeDebugRecorder
 import com.example.welive.diagnostics.HomeDebugRecorderState
+import com.example.welive.deviceowner.DeviceOwnerPolicyController
+import com.example.welive.deviceowner.UninstallProtectionStatus
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.DailyScheduleWindow
 import com.example.welive.settings.InstagramAccessScheduleCodec
@@ -83,6 +82,7 @@ import com.example.welive.settings.UserRulesRepository
 import com.example.welive.settings.crossesMidnight
 import com.example.welive.training.TrainingCaptureState
 import com.example.welive.training.TrainingDataRepository
+import com.example.welive.ui.theme.Carbon
 import com.example.welive.ui.theme.Graphite
 import com.example.welive.ui.theme.Ink
 import com.example.welive.ui.theme.Paper
@@ -90,6 +90,7 @@ import com.example.welive.ui.theme.SignalCyan
 import com.example.welive.ui.theme.SignalGreen
 import com.example.welive.ui.theme.SignalRed
 import com.example.welive.ui.theme.Steel
+import com.example.welive.visibility.AppVisibilityController
 import java.time.LocalTime
 import java.time.Duration
 import java.time.ZonedDateTime
@@ -99,19 +100,26 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.launch
 
 @Composable
-fun UnreelApp() {
+fun WeLiveApp() {
     val context = LocalContext.current
     val lifecycleOwner = LocalLifecycleOwner.current
     val repository = remember { UserRulesRepository(context.applicationContext) }
     val trainingRepository = remember { TrainingDataRepository(context.applicationContext) }
+    val deviceOwnerPolicyController = remember { DeviceOwnerPolicyController(context.applicationContext) }
+    val appVisibilityController = remember { AppVisibilityController(context.applicationContext) }
     val settings by repository.settings.collectAsState(initial = AppSettings())
     val diagnostics by DetectionDiagnostics.recentResults.collectAsState()
     val homeDebugState by HomeDebugRecorder.state.collectAsState()
     val latestSnapshot by TrainingCaptureState.latestInstagramSnapshot.collectAsState()
+    val latestSettingsSnapshot by TrainingCaptureState.latestSettingsSnapshot.collectAsState()
     val scope = rememberCoroutineScope()
     var showInstagramSettings by remember { mutableStateOf(false) }
     var trainingCount by remember { mutableStateOf(0) }
     var trainingMessage by remember { mutableStateOf("Capture Instagram, return here, tap a label.") }
+    var settingsTrainingCount by remember { mutableStateOf(0) }
+    var settingsTrainingMessage by remember {
+        mutableStateOf("Open Unreel uninstall or Accessibility permission screens, return here, tap a label.")
+    }
     var openLimitResetCountdown by remember { mutableStateOf(formatOpenLimitResetCountdown()) }
     var selectedTab by remember { mutableStateOf(AppDashboardTab.ProtectedApps) }
     var sessionUnlocked by rememberSaveable { mutableStateOf(false) }
@@ -121,13 +129,50 @@ fun UnreelApp() {
     var securityPinConfirm by rememberSaveable { mutableStateOf("") }
     var securityMessage by remember { mutableStateOf<String?>(null) }
     var currentTimeMillis by remember { mutableStateOf(System.currentTimeMillis()) }
+    var pendingCredentialRequest by remember { mutableStateOf<DeviceCredentialRequest?>(null) }
 
     val appLockConfigured = settings.appSecurityEnabled && settings.hasAppPinConfigured()
     val appIsLocked = settings.isAppLocked(currentTimeMillis)
     val needsPinUnlock = appLockConfigured && !appIsLocked && !sessionUnlocked
+    val uninstallProtectionStatus = remember(
+        settings.protectAppUninstall,
+        settings.uninstallBypassUntilMillis,
+        currentTimeMillis
+    ) {
+        deviceOwnerPolicyController.status(settings, currentTimeMillis)
+    }
+    val credentialLauncher = rememberLauncherForActivityResult(
+        contract = ActivityResultContracts.StartActivityForResult()
+    ) { result ->
+        val request = pendingCredentialRequest
+        pendingCredentialRequest = null
+        if (request == null) {
+            return@rememberLauncherForActivityResult
+        }
+        if (result.resultCode != Activity.RESULT_OK) {
+            securityMessage = "Phone credential check was cancelled."
+            return@rememberLauncherForActivityResult
+        }
+        when (request) {
+            DeviceCredentialRequest.AllowTemporaryUninstall -> {
+                val now = System.currentTimeMillis()
+                val bypassUntilMillis = now + APP_UNINSTALL_BYPASS_DURATION_MILLIS
+                scope.launch {
+                    repository.allowAppUninstallTemporarily(APP_UNINSTALL_BYPASS_DURATION_MILLIS)
+                    deviceOwnerPolicyController.syncPolicies(
+                        settings.copy(uninstallBypassUntilMillis = bypassUntilMillis),
+                        nowMillis = now
+                    )
+                    securityMessage = "Uninstall allowed for 2 minutes."
+                    context.startActivity(deviceOwnerPolicyController.createAppInfoIntent())
+                }
+            }
+        }
+    }
 
     LaunchedEffect(Unit) {
         trainingCount = trainingRepository.countSamples()
+        settingsTrainingCount = trainingRepository.countSettingsSamples()
     }
 
     LaunchedEffect(Unit) {
@@ -150,6 +195,14 @@ fun UnreelApp() {
         }
     }
 
+    LaunchedEffect(settings.protectAppUninstall, settings.uninstallBypassUntilMillis) {
+        deviceOwnerPolicyController.syncPolicies(settings)
+    }
+
+    LaunchedEffect(settings.hideLauncherIcon) {
+        appVisibilityController.syncLauncherVisibility(settings.hideLauncherIcon)
+    }
+
     DisposableEffect(lifecycleOwner, settings.appSecurityEnabled) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && settings.appSecurityEnabled) {
@@ -166,12 +219,26 @@ fun UnreelApp() {
 
     Surface(
         modifier = Modifier.fillMaxSize(),
-        color = Ink
+        color = Carbon
     ) {
         if (appIsLocked) {
             LockedAppScreen(
                 lockedUntilMillis = settings.appLockedUntilMillis,
-                currentTimeMillis = currentTimeMillis
+                currentTimeMillis = currentTimeMillis,
+                uninstallProtectionStatus = uninstallProtectionStatus,
+                onTemporarilyAllowUninstall = {
+                    requestDeviceCredentialForTemporaryUninstall(
+                        context = context,
+                        canManageUninstallBlock = uninstallProtectionStatus.canControlUninstallBlock,
+                        onLaunch = { intent ->
+                            pendingCredentialRequest = DeviceCredentialRequest.AllowTemporaryUninstall
+                            credentialLauncher.launch(intent)
+                        },
+                        onError = { message ->
+                            securityMessage = message
+                        }
+                    )
+                }
             )
             return@Surface
         }
@@ -200,7 +267,7 @@ fun UnreelApp() {
         LazyColumn(
             modifier = Modifier
                 .fillMaxSize()
-                .background(Ink),
+                .background(Carbon),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
@@ -216,80 +283,6 @@ fun UnreelApp() {
             }
 
             if (selectedTab == AppDashboardTab.ProtectedApps) {
-                item {
-                    AppSecurityPanel(
-                        settings = settings,
-                        currentTimeMillis = currentTimeMillis,
-                        pin = securityPin,
-                        pinConfirm = securityPinConfirm,
-                        message = securityMessage,
-                        onPinChange = {
-                            securityPin = it.take(MAX_PIN_LENGTH).filter(Char::isDigit)
-                            securityMessage = null
-                        },
-                        onPinConfirmChange = {
-                            securityPinConfirm = it.take(MAX_PIN_LENGTH).filter(Char::isDigit)
-                            securityMessage = null
-                        },
-                        onLockDurationHoursChange = { hours ->
-                            scope.launch { repository.setAppLockDurationHours(hours) }
-                        },
-                        onEnableAndLock = {
-                            val validationMessage = validatePinInputs(securityPin, securityPinConfirm)
-                            if (validationMessage != null) {
-                                securityMessage = validationMessage
-                            } else {
-                                scope.launch {
-                                    repository.enableAppSecurity(
-                                        pin = securityPin,
-                                        durationHours = settings.appLockDurationHours
-                                    )
-                                    securityPin = ""
-                                    securityPinConfirm = ""
-                                    securityMessage = "App lock enabled."
-                                    sessionUnlocked = false
-                                }
-                            }
-                        },
-                        onUpdatePin = {
-                            val validationMessage = validatePinInputs(securityPin, securityPinConfirm)
-                            if (validationMessage != null) {
-                                securityMessage = validationMessage
-                            } else {
-                                scope.launch {
-                                    repository.updateAppSecurityPin(securityPin)
-                                    securityPin = ""
-                                    securityPinConfirm = ""
-                                    securityMessage = "PIN updated."
-                                }
-                            }
-                        },
-                        onLockNow = {
-                            scope.launch {
-                                repository.armAppSecurityLock()
-                                sessionUnlocked = false
-                            }
-                        },
-                        onDisable = {
-                            scope.launch {
-                                repository.disableAppSecurity()
-                                sessionUnlocked = true
-                                securityPin = ""
-                                securityPinConfirm = ""
-                                securityMessage = "App lock disabled."
-                            }
-                        }
-                    )
-                }
-
-                item {
-                    PermissionPanel(
-                        onOpenAccessibility = {
-                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
-                        }
-                    )
-                }
-
                 item {
                     RulePanel(
                         settings = settings,
@@ -345,6 +338,117 @@ fun UnreelApp() {
                         }
                     )
                 }
+            } else if (selectedTab == AppDashboardTab.Security) {
+                item {
+                    AppSecurityPanel(
+                        settings = settings,
+                        currentTimeMillis = currentTimeMillis,
+                        uninstallProtectionStatus = uninstallProtectionStatus,
+                        pin = securityPin,
+                        pinConfirm = securityPinConfirm,
+                        message = securityMessage,
+                        onPinChange = {
+                            securityPin = it.take(MAX_PIN_LENGTH).filter(Char::isDigit)
+                            securityMessage = null
+                        },
+                        onPinConfirmChange = {
+                            securityPinConfirm = it.take(MAX_PIN_LENGTH).filter(Char::isDigit)
+                            securityMessage = null
+                        },
+                        onLockDurationHoursChange = { hours ->
+                            scope.launch { repository.setAppLockDurationHours(hours) }
+                        },
+                        onEnableAndLock = {
+                            val validationMessage = validatePinInputs(securityPin, securityPinConfirm)
+                            if (validationMessage != null) {
+                                securityMessage = validationMessage
+                            } else {
+                                scope.launch {
+                                    repository.enableAppSecurity(
+                                        pin = securityPin,
+                                        durationHours = settings.appLockDurationHours
+                                    )
+                                    securityPin = ""
+                                    securityPinConfirm = ""
+                                    securityMessage = "App lock enabled."
+                                    sessionUnlocked = false
+                                }
+                            }
+                        },
+                        onUpdatePin = {
+                            val validationMessage = validatePinInputs(securityPin, securityPinConfirm)
+                            if (validationMessage != null) {
+                                securityMessage = validationMessage
+                            } else {
+                                scope.launch {
+                                    repository.updateAppSecurityPin(securityPin)
+                                    securityPin = ""
+                                    securityPinConfirm = ""
+                                    securityMessage = "PIN updated."
+                                }
+                            }
+                        },
+                        onLockNow = {
+                            scope.launch {
+                                repository.armAppSecurityLock()
+                                sessionUnlocked = false
+                            }
+                        },
+                        onProtectAppUninstallChange = { enabled ->
+                            scope.launch {
+                                repository.setProtectAppUninstall(enabled)
+                                deviceOwnerPolicyController.syncPolicies(
+                                    settings.copy(
+                                        protectAppUninstall = enabled,
+                                        uninstallBypassUntilMillis = if (enabled) {
+                                            settings.uninstallBypassUntilMillis
+                                        } else {
+                                            0L
+                                        }
+                                    )
+                                )
+                            }
+                        },
+                        onTemporarilyAllowUninstall = {
+                            requestDeviceCredentialForTemporaryUninstall(
+                                context = context,
+                                canManageUninstallBlock = uninstallProtectionStatus.canControlUninstallBlock,
+                                onLaunch = { intent ->
+                                    pendingCredentialRequest = DeviceCredentialRequest.AllowTemporaryUninstall
+                                    credentialLauncher.launch(intent)
+                                },
+                                onError = { message ->
+                                    securityMessage = message
+                                }
+                            )
+                        },
+                        onHideLauncherIconChange = { enabled ->
+                            scope.launch {
+                                repository.setHideLauncherIcon(enabled)
+                            }
+                        },
+                        onOpenHiddenEntry = {
+                            context.startActivity(appVisibilityController.createReopenIntent())
+                        },
+                        onDisable = {
+                            scope.launch {
+                                repository.disableAppSecurity()
+                                sessionUnlocked = true
+                                securityPin = ""
+                                securityPinConfirm = ""
+                                securityMessage = "App lock disabled."
+                            }
+                        }
+                    )
+                }
+
+                item {
+                    PermissionPanel(
+                        onOpenAccessibility = {
+                            context.startActivity(Intent(Settings.ACTION_ACCESSIBILITY_SETTINGS))
+                        }
+                    )
+                }
             } else {
                 item {
                     TrainingPanel(
@@ -360,6 +464,34 @@ fun UnreelApp() {
                                 scope.launch {
                                     trainingCount = trainingRepository.saveInstagramSample(label, snapshot)
                                     trainingMessage = "Saved $label sample."
+                                }
+                            }
+                        }
+                    )
+                }
+
+                item {
+                    SettingsTrainingPanel(
+                        latestSnapshot = latestSettingsSnapshot,
+                        sampleCount = settingsTrainingCount,
+                        message = settingsTrainingMessage,
+                        filePath = trainingRepository.settingsSamplesFilePath,
+                        onLabel = { label ->
+                            val snapshot = latestSettingsSnapshot
+                            if (snapshot == null) {
+                                settingsTrainingMessage = "No Settings snapshot yet."
+                            } else {
+                                scope.launch {
+                                    val result = trainingRepository.saveSettingsSample(label, snapshot)
+                                    settingsTrainingCount = result.count
+                                    settingsTrainingMessage = when {
+                                        result.saved -> "Saved $label sample."
+                                        result.conflictingLabel != null ->
+                                            "This exact snapshot already exists as ${result.conflictingLabel}. Capture a different Settings screen before relabeling."
+                                        result.duplicateLabel != null ->
+                                            "That exact $label snapshot is already saved."
+                                        else -> "Settings sample was not saved."
+                                    }
                                 }
                             }
                         }
@@ -399,14 +531,17 @@ fun UnreelApp() {
 }
 
 private enum class AppDashboardTab(val title: String, val subtitle: String) {
-    ProtectedApps("Protected Apps", "Rules and access control"),
+    ProtectedApps("Apps", "Instagram rules"),
+    Security("Security", "Lock and permissions"),
     Data("Data", "Training, recorder, diagnostics")
 }
 
 @Composable
 private fun LockedAppScreen(
     lockedUntilMillis: Long,
-    currentTimeMillis: Long
+    currentTimeMillis: Long,
+    uninstallProtectionStatus: UninstallProtectionStatus,
+    onTemporarilyAllowUninstall: () -> Unit
 ) {
     Surface(
         modifier = Modifier.fillMaxSize(),
@@ -441,6 +576,38 @@ private fun LockedAppScreen(
                     color = Steel,
                     style = MaterialTheme.typography.labelLarge
                 )
+                if (uninstallProtectionStatus.protectionEnabled) {
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Button(
+                        onClick = onTemporarilyAllowUninstall,
+                        enabled = uninstallProtectionStatus.canControlUninstallBlock,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = Graphite,
+                            contentColor = Paper,
+                            disabledContainerColor = Graphite.copy(alpha = 0.45f),
+                            disabledContentColor = Steel
+                        )
+                    ) {
+                        Text(
+                            if (uninstallProtectionStatus.uninstallBypassActive) {
+                                "Uninstall already allowed"
+                            } else {
+                                "Allow uninstall with phone credential"
+                            }
+                        )
+                    }
+                    Spacer(modifier = Modifier.height(8.dp))
+                    Text(
+                        text = if (uninstallProtectionStatus.canControlUninstallBlock) {
+                            "This opens a short uninstall window after a phone PIN, pattern, or password check."
+                        } else {
+                            "Uninstall protection needs device-owner provisioning before it can be enforced."
+                        },
+                        color = Steel,
+                        style = MaterialTheme.typography.labelLarge
+                    )
+                }
             }
         }
     }
@@ -509,6 +676,7 @@ private fun AppUnlockScreen(
 private fun AppSecurityPanel(
     settings: AppSettings,
     currentTimeMillis: Long,
+    uninstallProtectionStatus: UninstallProtectionStatus,
     pin: String,
     pinConfirm: String,
     message: String?,
@@ -518,6 +686,10 @@ private fun AppSecurityPanel(
     onEnableAndLock: () -> Unit,
     onUpdatePin: () -> Unit,
     onLockNow: () -> Unit,
+    onProtectAppUninstallChange: (Boolean) -> Unit,
+    onTemporarilyAllowUninstall: () -> Unit,
+    onHideLauncherIconChange: (Boolean) -> Unit,
+    onOpenHiddenEntry: () -> Unit,
     onDisable: () -> Unit
 ) {
     val configured = settings.hasAppPinConfigured()
@@ -567,6 +739,90 @@ private fun AppSecurityPanel(
             color = if (message == null) Steel else SignalRed,
             style = MaterialTheme.typography.labelLarge
         )
+
+        Spacer(modifier = Modifier.height(14.dp))
+        ToggleRow(
+            label = "Block Uninstall",
+            detail = when {
+                uninstallProtectionStatus.canControlUninstallBlock && uninstallProtectionStatus.uninstallBypassActive ->
+                    "Temporarily unlocked for removal"
+                uninstallProtectionStatus.canControlUninstallBlock ->
+                    "Requires phone credential before removal"
+                else ->
+                    "Requires device-owner setup to enforce"
+            },
+            checked = settings.protectAppUninstall,
+            accent = SignalRed,
+            onCheckedChange = onProtectAppUninstallChange
+        )
+
+        Spacer(modifier = Modifier.height(8.dp))
+        Text(
+            text = when {
+                uninstallProtectionStatus.isDeviceOwner ->
+                    "Device-owner control is active."
+                uninstallProtectionStatus.isDeviceAdminActive ->
+                    "Device admin is active, but uninstall blocking still needs full device-owner provisioning."
+                else ->
+                    "Regular installs cannot block uninstall. Provision Unreel as the device owner to turn this on for real."
+            },
+            color = Steel,
+            style = MaterialTheme.typography.labelLarge
+        )
+
+        Spacer(modifier = Modifier.height(10.dp))
+        Button(
+            onClick = onTemporarilyAllowUninstall,
+            enabled = settings.protectAppUninstall && uninstallProtectionStatus.canControlUninstallBlock,
+            shape = RoundedCornerShape(8.dp),
+            colors = ButtonDefaults.buttonColors(
+                containerColor = SignalRed,
+                contentColor = Ink,
+                disabledContainerColor = Graphite.copy(alpha = 0.45f),
+                disabledContentColor = Steel
+            )
+        ) {
+            Text(
+                if (uninstallProtectionStatus.uninstallBypassActive) {
+                    "Uninstall Open for 2 Minutes"
+                } else {
+                    "Allow Uninstall with Phone Credential"
+                }
+            )
+        }
+
+        Spacer(modifier = Modifier.height(14.dp))
+        ToggleRow(
+            label = "Hide App Icon",
+            detail = if (settings.hideLauncherIcon) {
+                "Launcher icon hidden. Reopen with unreel://open"
+            } else {
+                "Remove Unreel from the launcher and app drawer"
+            },
+            checked = settings.hideLauncherIcon,
+            accent = SignalCyan,
+            onCheckedChange = onHideLauncherIconChange
+        )
+
+        if (settings.hideLauncherIcon) {
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(
+                text = "Reopen path: unreel://open",
+                color = Steel,
+                style = MaterialTheme.typography.labelLarge
+            )
+            Spacer(modifier = Modifier.height(10.dp))
+            Button(
+                onClick = onOpenHiddenEntry,
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Graphite,
+                    contentColor = Paper
+                )
+            ) {
+                Text("Test Hidden Entry")
+            }
+        }
 
         Spacer(modifier = Modifier.height(14.dp))
         if (!settings.appSecurityEnabled || !configured) {
@@ -636,58 +892,89 @@ private fun Header(settings: AppSettings) {
         animationSpec = tween(durationMillis = 520),
         label = "protection_intensity"
     )
-    Column(
+    Box(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 18.dp)
+            .padding(top = 10.dp)
+            .clip(RoundedCornerShape(8.dp))
+            .background(
+                Brush.linearGradient(
+                    colors = listOf(
+                        Ink,
+                        Color(0xFFEAF2FF),
+                        Color(0xFFFFEEF3)
+                    )
+                )
+            )
+            .border(1.dp, Ink, RoundedCornerShape(8.dp))
+            .padding(18.dp)
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
+            horizontalArrangement = Arrangement.spacedBy(14.dp),
+            modifier = Modifier.fillMaxWidth()
         ) {
             Box(
                 modifier = Modifier
-                    .size(54.dp)
+                    .size(58.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Graphite)
-                    .border(1.dp, Color.White.copy(alpha = 0.12f), RoundedCornerShape(8.dp))
+                    .background(Paper)
+                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
             ) {
-                Image(
-                    painter = painterResource(id = R.drawable.unreel_logo_mark),
-                    contentDescription = null,
+                Box(
                     modifier = Modifier
-                        .fillMaxSize()
-                        .padding(5.dp)
+                        .size(22.dp)
+                        .align(Alignment.Center)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SignalGreen.copy(alpha = activeTarget))
+                )
+                Box(
+                    modifier = Modifier
+                        .size(9.dp)
+                        .align(Alignment.TopEnd)
+                        .offset(x = (-10).dp, y = 10.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(SignalCyan)
                 )
             }
-            Column {
+            Column(modifier = Modifier.weight(1f)) {
                 Text(
                     text = "Unreel",
                     color = Paper,
                     style = MaterialTheme.typography.headlineLarge
                 )
                 Text(
-                    text = "Shortform shield",
+                    text = "Shortform protection",
                     color = Steel,
                     style = MaterialTheme.typography.bodyLarge
                 )
             }
+            Text(
+                text = if (settings.blockInstagramReels) "Active" else "Paused",
+                color = Ink,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(if (settings.blockInstagramReels) SignalGreen else Steel)
+                    .padding(horizontal = 12.dp, vertical = 8.dp)
+            )
         }
-        Spacer(modifier = Modifier.height(22.dp))
         Box(
             modifier = Modifier
                 .fillMaxWidth()
-                .height(6.dp)
+                .height(5.dp)
+                .align(Alignment.BottomCenter)
+                .offset(y = 18.dp)
                 .clip(RoundedCornerShape(6.dp))
-                .background(Graphite)
+                .background(Color.White.copy(alpha = 0.75f))
         ) {
             Box(
                 modifier = Modifier
                     .fillMaxWidth(activeTarget)
-                    .height(6.dp)
+                    .height(5.dp)
                     .background(
                         Brush.horizontalGradient(
-                            colors = listOf(SignalGreen, SignalCyan, SignalRed)
+                            colors = listOf(SignalGreen, SignalRed, SignalCyan)
                         )
                     )
             )
@@ -700,48 +987,47 @@ private fun DashboardTabSwitcher(
     selectedTab: AppDashboardTab,
     onTabSelected: (AppDashboardTab) -> Unit
 ) {
-    Panel {
-        Row(
-            modifier = Modifier
-                .fillMaxWidth()
-                .clip(RoundedCornerShape(8.dp))
-                .background(Color.White.copy(alpha = 0.04f))
-                .padding(4.dp),
-            horizontalArrangement = Arrangement.spacedBy(8.dp)
-        ) {
-            AppDashboardTab.entries.forEach { tab ->
-                val active = tab == selectedTab
-                Button(
-                    onClick = { onTabSelected(tab) },
-                    modifier = Modifier.weight(1f),
-                    shape = RoundedCornerShape(8.dp),
-                    colors = ButtonDefaults.buttonColors(
-                        containerColor = if (active) Paper else Graphite,
-                        contentColor = if (active) Ink else Paper
-                    ),
-                    contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                        horizontal = 12.dp,
-                        vertical = 14.dp
-                    )
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .clip(RoundedCornerShape(8.dp))
+            .background(Ink)
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(5.dp),
+        horizontalArrangement = Arrangement.spacedBy(6.dp)
+    ) {
+        AppDashboardTab.entries.forEach { tab ->
+            val active = tab == selectedTab
+            Button(
+                onClick = { onTabSelected(tab) },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = if (active) Paper else Color.Transparent,
+                    contentColor = if (active) Ink else Paper
+                ),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                    horizontal = 8.dp,
+                    vertical = 12.dp
+                )
+            ) {
+                Column(
+                    horizontalAlignment = Alignment.CenterHorizontally,
+                    modifier = Modifier.fillMaxWidth()
                 ) {
-                    Column(
-                        horizontalAlignment = Alignment.Start,
-                        modifier = Modifier.fillMaxWidth()
-                    ) {
-                        Text(
-                            text = tab.title,
-                            style = MaterialTheme.typography.titleSmall,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                        Text(
-                            text = tab.subtitle,
-                            style = MaterialTheme.typography.labelMedium,
-                            color = if (active) Ink.copy(alpha = 0.72f) else Steel,
-                            maxLines = 1,
-                            overflow = TextOverflow.Ellipsis
-                        )
-                    }
+                    Text(
+                        text = tab.title,
+                        style = MaterialTheme.typography.titleSmall,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                    Text(
+                        text = tab.subtitle,
+                        style = MaterialTheme.typography.labelMedium,
+                        color = if (active) Ink.copy(alpha = 0.72f) else Steel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
                 }
             }
         }
@@ -839,9 +1125,9 @@ private fun RulePanel(
             }
             IconButton(onClick = onInstagramSettingsClick) {
                 Text(
-                    text = "⚙",
+                    text = "Edit",
                     color = if (showInstagramSettings) SignalGreen else Paper,
-                    style = MaterialTheme.typography.titleMedium
+                    style = MaterialTheme.typography.labelLarge
                 )
             }
         }
@@ -1203,6 +1489,93 @@ private fun TrainingPanel(
 }
 
 @Composable
+private fun SettingsTrainingPanel(
+    latestSnapshot: WindowSnapshot?,
+    sampleCount: Int,
+    message: String,
+    filePath: String,
+    onLabel: (String) -> Unit
+) {
+    val labels = listOf(
+        "UNINSTALL_UNREEL",
+        "ACCESSIBILITY_BLOCKER",
+        "SETTINGS_SAFE",
+        "UNKNOWN"
+    )
+
+    Panel(borderColor = SignalRed.copy(alpha = 0.45f)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f)) {
+                Text("Settings guard training", color = Paper, style = MaterialTheme.typography.titleMedium)
+                Text(message, color = Steel, maxLines = 2, overflow = TextOverflow.Ellipsis)
+            }
+            Text("$sampleCount saved", color = SignalRed, style = MaterialTheme.typography.labelLarge)
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        if (latestSnapshot == null) {
+            Text("Latest Settings snapshot: none", color = Steel)
+        } else {
+            Text(
+                text = "Latest: ${latestSnapshot.packageName}, ${latestSnapshot.nodeCount} nodes, ${latestSnapshot.viewIds.size} ids",
+                color = Steel,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
+            )
+        }
+
+        Spacer(modifier = Modifier.height(12.dp))
+
+        labels.chunked(2).forEach { rowLabels ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.spacedBy(8.dp)
+            ) {
+                rowLabels.forEach { label ->
+                    Button(
+                        onClick = { onLabel(label) },
+                        modifier = Modifier.weight(1f),
+                        enabled = latestSnapshot != null,
+                        shape = RoundedCornerShape(8.dp),
+                        colors = ButtonDefaults.buttonColors(
+                            containerColor = when (label) {
+                                "UNINSTALL_UNREEL" -> SignalRed
+                                "ACCESSIBILITY_BLOCKER" -> SignalGreen
+                                "SETTINGS_SAFE" -> SignalCyan
+                                else -> Graphite
+                            },
+                            contentColor = if (label == "UNKNOWN") Paper else Ink,
+                            disabledContainerColor = Graphite.copy(alpha = 0.35f),
+                            disabledContentColor = Steel
+                        )
+                    ) {
+                        Text(label, maxLines = 1, overflow = TextOverflow.Ellipsis)
+                    }
+                }
+                repeat(2 - rowLabels.size) {
+                    Spacer(modifier = Modifier.weight(1f))
+                }
+            }
+            Spacer(modifier = Modifier.height(8.dp))
+        }
+
+        Spacer(modifier = Modifier.height(2.dp))
+        Text(
+            text = filePath,
+            color = Steel,
+            maxLines = 1,
+            overflow = TextOverflow.Ellipsis,
+            style = MaterialTheme.typography.labelLarge
+        )
+    }
+}
+
+@Composable
 private fun HomeDebugRecorderPanel(
     state: HomeDebugRecorderState,
     onStart: () -> Unit,
@@ -1492,25 +1865,25 @@ private fun PinTextField(
             disabledContainerColor = Graphite.copy(alpha = 0.45f),
             focusedTextColor = Paper,
             unfocusedTextColor = Paper,
-            focusedLabelColor = SignalCyan,
+            focusedLabelColor = SignalGreen,
             unfocusedLabelColor = Steel,
-            focusedIndicatorColor = SignalCyan,
-            unfocusedIndicatorColor = Color.White.copy(alpha = 0.12f),
-            cursorColor = SignalCyan
+            focusedIndicatorColor = SignalGreen,
+            unfocusedIndicatorColor = Graphite,
+            cursorColor = SignalGreen
         )
     )
 }
 
 @Composable
 private fun Panel(
-    borderColor: Color = Color.White.copy(alpha = 0.10f),
+    borderColor: Color = Graphite,
     content: @Composable ColumnScope.() -> Unit
 ) {
     Column(
         modifier = Modifier
             .fillMaxWidth()
             .clip(RoundedCornerShape(8.dp))
-            .background(Graphite.copy(alpha = 0.72f))
+            .background(Ink)
             .border(BorderStroke(1.dp, borderColor), RoundedCornerShape(8.dp))
             .padding(16.dp),
         content = content
@@ -1622,3 +1995,48 @@ private const val SCHEDULE_MINUTE_STEP = 15
 private const val MAX_SCHEDULE_WINDOWS = 4
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 8
+private const val APP_UNINSTALL_BYPASS_DURATION_MILLIS = 2L * 60L * 1000L
+
+private enum class DeviceCredentialRequest {
+    AllowTemporaryUninstall
+}
+
+@Suppress("DEPRECATION")
+private fun requestDeviceCredentialForTemporaryUninstall(
+    context: Context,
+    canManageUninstallBlock: Boolean,
+    onLaunch: (Intent) -> Unit,
+    onError: (String) -> Unit
+) {
+    if (!canManageUninstallBlock) {
+        onError("Uninstall protection needs device-owner provisioning first.")
+        return
+    }
+    val activity = context.findActivity()
+    if (activity == null) {
+        onError("Couldn't open the phone credential prompt.")
+        return
+    }
+    val keyguardManager = activity.getSystemService(KeyguardManager::class.java)
+    if (keyguardManager?.isDeviceSecure != true) {
+        onError("Set a phone PIN, pattern, or password first.")
+        return
+    }
+    val intent = keyguardManager.createConfirmDeviceCredentialIntent(
+        "Allow uninstall",
+        "Use your phone credential to temporarily allow Unreel to be removed."
+    )
+    if (intent == null) {
+        onError("Phone credential confirmation isn't available on this device.")
+        return
+    }
+    onLaunch(intent)
+}
+
+private tailrec fun Context.findActivity(): Activity? {
+    return when (this) {
+        is Activity -> this
+        is ContextWrapper -> baseContext.findActivity()
+        else -> null
+    }
+}

@@ -21,6 +21,9 @@ class UserRulesRepository(private val context: Context) {
         val AppAccessPinSalt = stringPreferencesKey("app_access_pin_salt")
         val AppLockDurationHours = intPreferencesKey("app_lock_duration_hours")
         val AppLockedUntilMillis = longPreferencesKey("app_locked_until_millis")
+        val ProtectAppUninstall = booleanPreferencesKey("protect_app_uninstall")
+        val UninstallBypassUntilMillis = longPreferencesKey("uninstall_bypass_until_millis")
+        val HideLauncherIcon = booleanPreferencesKey("hide_launcher_icon")
         val GrayscaleInstagramApp = booleanPreferencesKey("grayscale_instagram_app")
         val LimitInstagramOpensPerDay = booleanPreferencesKey("limit_instagram_opens_per_day_v2")
         val InstagramDailyOpenLimit = intPreferencesKey("instagram_daily_open_limit_v2")
@@ -49,6 +52,9 @@ class UserRulesRepository(private val context: Context) {
             appAccessPinSalt = preferences[Keys.AppAccessPinSalt] ?: "",
             appLockDurationHours = preferences[Keys.AppLockDurationHours] ?: 24,
             appLockedUntilMillis = preferences[Keys.AppLockedUntilMillis] ?: 0L,
+            protectAppUninstall = preferences[Keys.ProtectAppUninstall] ?: true,
+            uninstallBypassUntilMillis = preferences[Keys.UninstallBypassUntilMillis] ?: 0L,
+            hideLauncherIcon = preferences[Keys.HideLauncherIcon] ?: false,
             grayscaleInstagramApp = preferences[Keys.GrayscaleInstagramApp] ?: false,
             limitInstagramOpensPerDay = preferences[Keys.LimitInstagramOpensPerDay] ?: false,
             instagramDailyOpenLimit = preferences[Keys.InstagramDailyOpenLimit] ?: 5,
@@ -115,6 +121,34 @@ class UserRulesRepository(private val context: Context) {
                 val durationHours = (it[Keys.AppLockDurationHours] ?: 24).coerceIn(1, 168)
                 it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + durationHours * HOUR_IN_MILLIS
             }
+        }
+    }
+
+    suspend fun setProtectAppUninstall(enabled: Boolean) {
+        context.weLiveDataStore.edit {
+            it[Keys.ProtectAppUninstall] = enabled
+            if (!enabled) {
+                it[Keys.UninstallBypassUntilMillis] = 0L
+            }
+        }
+    }
+
+    suspend fun setHideLauncherIcon(enabled: Boolean) {
+        context.weLiveDataStore.edit {
+            it[Keys.HideLauncherIcon] = enabled
+        }
+    }
+
+    suspend fun allowAppUninstallTemporarily(durationMillis: Long) {
+        context.weLiveDataStore.edit {
+            val safeDurationMillis = durationMillis.coerceIn(60_000L, 30L * 60L * 1000L)
+            it[Keys.UninstallBypassUntilMillis] = System.currentTimeMillis() + safeDurationMillis
+        }
+    }
+
+    suspend fun clearAppUninstallBypass() {
+        context.weLiveDataStore.edit {
+            it[Keys.UninstallBypassUntilMillis] = 0L
         }
     }
 

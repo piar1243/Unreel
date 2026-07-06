@@ -11,6 +11,9 @@ data class AppSettings(
     val appAccessPinSalt: String = "",
     val appLockDurationHours: Int = 24,
     val appLockedUntilMillis: Long = 0L,
+    val protectAppUninstall: Boolean = true,
+    val uninstallBypassUntilMillis: Long = 0L,
+    val hideLauncherIcon: Boolean = false,
     val grayscaleInstagramApp: Boolean = false,
     val limitInstagramOpensPerDay: Boolean = false,
     val instagramDailyOpenLimit: Int = 5,
@@ -35,6 +38,10 @@ data class AppSettings(
 
     fun isAppLocked(nowMillis: Long = System.currentTimeMillis()): Boolean {
         return appSecurityEnabled && hasAppPinConfigured() && appLockedUntilMillis > nowMillis
+    }
+
+    fun isUninstallBypassActive(nowMillis: Long = System.currentTimeMillis()): Boolean {
+        return uninstallBypassUntilMillis > nowMillis
     }
 
     fun verifyAppPin(pin: String): Boolean {

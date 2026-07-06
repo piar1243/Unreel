@@ -2,4 +2,6 @@
     <string name="app_name">Unreel</string>
     <string name="accessibility_service_label">Unreel shortform blocker</string>
     <string name="accessibility_service_description">Detects shortform surfaces and blocks Instagram Reels when enabled.</string>
+    <string name="device_admin_label">Unreel device protection</string>
+    <string name="device_admin_description">Lets Unreel apply device-owner uninstall protection when provisioned as a managed device.</string>
 </resources>

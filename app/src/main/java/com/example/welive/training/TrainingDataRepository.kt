@@ -9,14 +9,27 @@ import org.json.JSONArray
 import org.json.JSONObject
 
 class TrainingDataRepository(private val context: Context) {
+    data class SaveSampleResult(
+        val count: Int,
+        val saved: Boolean,
+        val duplicateLabel: String? = null,
+        val conflictingLabel: String? = null
+    )
+
     private val trainingDir: File
         get() = File(context.filesDir, "training").apply { mkdirs() }
 
     private val samplesFile: File
         get() = File(trainingDir, "instagram_snapshots.jsonl")
 
+    private val settingsSamplesFile: File
+        get() = File(trainingDir, "settings_snapshots.jsonl")
+
     val samplesFilePath: String
         get() = samplesFile.absolutePath
+
+    val settingsSamplesFilePath: String
+        get() = settingsSamplesFile.absolutePath
 
     suspend fun saveInstagramSample(label: String, snapshot: WindowSnapshot): Int {
         return withContext(Dispatchers.IO) {
@@ -25,12 +38,57 @@ class TrainingDataRepository(private val context: Context) {
         }
     }
 
+    suspend fun saveSettingsSample(label: String, snapshot: WindowSnapshot): SaveSampleResult {
+        return withContext(Dispatchers.IO) {
+            val candidate = snapshot.toJson(label)
+            val candidateFingerprint = candidate.toFingerprint()
+
+            if (settingsSamplesFile.exists()) {
+                for (line in settingsSamplesFile.readLines()) {
+                    if (line.isBlank()) continue
+                    val existing = runCatching { JSONObject(line) }.getOrNull() ?: continue
+                    if (existing.toFingerprint() != candidateFingerprint) continue
+
+                    val existingLabel = existing.optString("label")
+                    val count = countSettingsSamplesInternal()
+                    return@withContext if (existingLabel == label) {
+                        SaveSampleResult(
+                            count = count,
+                            saved = false,
+                            duplicateLabel = existingLabel
+                        )
+                    } else {
+                        SaveSampleResult(
+                            count = count,
+                            saved = false,
+                            conflictingLabel = existingLabel
+                        )
+                    }
+                }
+            }
+
+            settingsSamplesFile.appendText(candidate.toString() + "\n")
+            SaveSampleResult(
+                count = countSettingsSamplesInternal(),
+                saved = true
+            )
+        }
+    }
+
     suspend fun countSamples(): Int {
         return withContext(Dispatchers.IO) { countSamplesInternal() }
     }
 
+    suspend fun countSettingsSamples(): Int {
+        return withContext(Dispatchers.IO) { countSettingsSamplesInternal() }
+    }
+
     private fun countSamplesInternal(): Int {
         return if (samplesFile.exists()) samplesFile.readLines().count { it.isNotBlank() } else 0
+    }
+
+    private fun countSettingsSamplesInternal(): Int {
+        return if (settingsSamplesFile.exists()) settingsSamplesFile.readLines().count { it.isNotBlank() } else 0
     }
 
     private fun WindowSnapshot.toJson(label: String): JSONObject {
@@ -110,7 +168,33 @@ class TrainingDataRepository(private val context: Context) {
             "edit profile",
             "more options",
             "not interested",
-            "report"
+            "report",
+            "accessibility",
+            "accessibility settings",
+            "accessibility button",
+            "installed apps",
+            "downloaded apps",
+            "unreel shortform blocker",
+            "shortform blocker",
+            "use unreel",
+            "allow unreel",
+            "stop unreel",
+            "turn off",
+            "turn on",
+            "permission",
+            "permissions",
+            "service",
+            "services",
+            "allowed",
+            "not allowed",
+            "uninstall",
+            "app info",
+            "remove app",
+            "delete app",
+            "unreel",
+            "cancel",
+            "ok",
+            "confirm"
         )
 
         return if (knownUiWords.any { normalized.contains(it) }) {
@@ -149,7 +233,25 @@ class TrainingDataRepository(private val context: Context) {
             "forward",
             "reply",
             "friend",
-            "thread"
+            "thread",
+            "accessibility",
+            "installed apps",
+            "downloaded apps",
+            "shortform blocker",
+            "turn off",
+            "turn on",
+            "permission",
+            "permissions",
+            "service",
+            "services",
+            "allowed",
+            "not allowed",
+            "uninstall",
+            "app info",
+            "remove app",
+            "delete app",
+            "unreel",
+            "confirm"
         ).filter { haystack.contains(it) }
     }
 
@@ -173,5 +275,12 @@ class TrainingDataRepository(private val context: Context) {
                     .put("bottom", feature.boundsBottom)
                 )
         })
+    }
+
+    private fun JSONObject.toFingerprint(): String {
+        return JSONObject(this.toString()).apply {
+            remove("label")
+            remove("capturedAtMillis")
+        }.toString()
     }
 }

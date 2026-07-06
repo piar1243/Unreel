@@ -12,10 +12,13 @@ import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
 import com.example.welive.MainActivity
 import com.example.welive.diagnostics.HomeDebugRecorder
+import com.example.welive.deviceowner.DeviceOwnerPolicyController
 import com.example.welive.detection.platforms.instagram.InstagramDetector
 import com.example.welive.detection.platforms.instagram.InstagramHomeFeedClassifier
 import com.example.welive.detection.platforms.instagram.InstagramHomeFeedRegionResolver
 import com.example.welive.detection.platforms.instagram.InstagramPackageConfig
+import com.example.welive.detection.platforms.settings.SettingsUninstallDetector
+import com.example.welive.detection.platforms.settings.SettingsPackageConfig
 import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 import com.example.welive.detection.platforms.instagramweb.InstagramWebDetector
 import com.example.welive.intervention.HomeFeedAudioController
@@ -25,6 +28,7 @@ import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.SystemGrayscaleController
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.UserRulesRepository
+import com.example.welive.training.TrainingCaptureState
 import java.time.LocalDate
 import java.time.ZonedDateTime
 import kotlinx.coroutines.CoroutineScope
@@ -34,7 +38,7 @@ import kotlinx.coroutines.cancel
 import kotlinx.coroutines.flow.collectLatest
 import kotlinx.coroutines.launch
 
-class UnreelAccessibilityService : AccessibilityService() {
+class WeLiveAccessibilityService : AccessibilityService() {
     private val serviceScope = CoroutineScope(SupervisorJob() + Dispatchers.Main.immediate)
     private val mainHandler = Handler(Looper.getMainLooper())
     private lateinit var settingsRepository: UserRulesRepository
@@ -43,6 +47,7 @@ class UnreelAccessibilityService : AccessibilityService() {
     private lateinit var homeFeedOverlayController: HomeFeedOverlayController
     private lateinit var instagramWebOverlayController: InstagramWebOverlayController
     private lateinit var systemGrayscaleController: SystemGrayscaleController
+    private lateinit var deviceOwnerPolicyController: DeviceOwnerPolicyController
     private lateinit var eventRouter: AccessibilityEventRouter
     private var currentSettings = AppSettings()
     private var nativeInstagramVisibleForGrayscale = false
@@ -53,10 +58,12 @@ class UnreelAccessibilityService : AccessibilityService() {
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        TrainingCaptureState.initialize(applicationContext)
         settingsRepository = UserRulesRepository(applicationContext)
         overlayController = OverlayController(this)
         homeFeedAudioController = HomeFeedAudioController(this)
         systemGrayscaleController = SystemGrayscaleController(applicationContext)
+        deviceOwnerPolicyController = DeviceOwnerPolicyController(applicationContext)
         homeFeedOverlayController = HomeFeedOverlayController(
             this,
             onStoryGestureTap = { x, y -> performStoryGestureTap(x, y) },
@@ -79,6 +86,7 @@ class UnreelAccessibilityService : AccessibilityService() {
             ),
             detectors = listOf(
                 InstagramDetector(),
+                SettingsUninstallDetector(),
                 InstagramWebDetector()
             ),
             overlayController = overlayController,
@@ -98,6 +106,7 @@ class UnreelAccessibilityService : AccessibilityService() {
         serviceScope.launch {
             settingsRepository.settings.collectLatest { settings ->
                 currentSettings = settings
+                deviceOwnerPolicyController.syncPolicies(settings)
                 if (!settings.grayscaleInstagramApp) {
                     systemGrayscaleController.restore()
                 } else if (nativeInstagramVisibleForGrayscale) {
@@ -171,8 +180,8 @@ class UnreelAccessibilityService : AccessibilityService() {
             return
         }
 
-        val isUnreelEvent = eventPackageName == packageName || rootPackageName == packageName
-        if (isUnreelEvent && !eventClassName.contains("MainActivity")) {
+        val isWeLiveEvent = eventPackageName == packageName || rootPackageName == packageName
+        if (isWeLiveEvent && !eventClassName.contains("MainActivity")) {
             return
         }
 
@@ -232,10 +241,10 @@ class UnreelAccessibilityService : AccessibilityService() {
             rootPackageName == InstagramPackageConfig.PACKAGE_NAME
 
         if (!instagramIsActive) {
-            val isUnreelOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
+            val isWeLiveOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
                 !eventClassName.contains("MainActivity")
             val isSystemEvent = eventPackageName == SYSTEM_UI_PACKAGE || rootPackageName == SYSTEM_UI_PACKAGE
-            if (!isUnreelOverlayEvent && !isSystemEvent) {
+            if (!isWeLiveOverlayEvent && !isSystemEvent) {
                 nativeInstagramSessionActiveForOpenLimit = false
             }
             return false
@@ -300,7 +309,7 @@ class UnreelAccessibilityService : AccessibilityService() {
     private fun openAppSettings() {
         val intent = Intent(this, MainActivity::class.java).apply {
             addFlags(Intent.FLAG_ACTIVITY_NEW_TASK or Intent.FLAG_ACTIVITY_CLEAR_TOP)
-            putExtra(Settings.EXTRA_SETTINGS_EMBEDDED_DEEP_LINK_INTENT_URI, "unreel://settings")
+            putExtra(Settings.EXTRA_SETTINGS_EMBEDDED_DEEP_LINK_INTENT_URI, "welive://settings")
         }
         startActivity(intent)
     }
@@ -348,32 +357,11 @@ class UnreelAccessibilityService : AccessibilityService() {
             return activeRoot
         }
 
-        val preferredPackages = preferredRootPackages(eventPackageName, eventClassName)
-        if (preferredPackages.isEmpty()) {
-            HomeDebugRecorder.recordRootSelection(
-                event = event,
-                activeRoot = activeRoot,
-                chosenRoot = activeRoot,
-                windowPackages = collectWindowPackages()
-            )
-            return activeRoot
-        }
-
-        if (activeRoot.packageNameString() in preferredPackages) {
-            HomeDebugRecorder.recordRootSelection(
-                event = event,
-                activeRoot = activeRoot,
-                chosenRoot = activeRoot,
-                windowPackages = collectWindowPackages()
-            )
-            return activeRoot
-        }
-
-        val chosenRoot = windows
-            .asSequence()
-            .mapNotNull { window -> runCatching { window.root }.getOrNull() }
-            .firstOrNull { root -> root.packageNameString() in preferredPackages }
-            ?: activeRoot
+        val chosenRoot = preferredRootForEvent(
+            eventPackageName = eventPackageName,
+            eventClassName = eventClassName,
+            activeRoot = activeRoot
+        )
         HomeDebugRecorder.recordRootSelection(
             event = event,
             activeRoot = activeRoot,
@@ -383,17 +371,47 @@ class UnreelAccessibilityService : AccessibilityService() {
         return chosenRoot
     }
 
-    private fun preferredRootPackages(
+    private fun preferredRootForEvent(
         eventPackageName: String,
-        eventClassName: String
-    ): Set<String> {
+        eventClassName: String,
+        activeRoot: AccessibilityNodeInfo?
+    ): AccessibilityNodeInfo? {
+        fun matchingWindowRoot(predicate: (String) -> Boolean): AccessibilityNodeInfo? {
+            return windows
+                .asSequence()
+                .mapNotNull { window -> runCatching { window.root }.getOrNull() }
+                .firstOrNull { root -> predicate(root.packageNameString()) }
+        }
+
         return when {
-            eventPackageName == InstagramPackageConfig.PACKAGE_NAME -> setOf(InstagramPackageConfig.PACKAGE_NAME)
-            BrowserPackageConfig.isSupported(eventPackageName) -> setOf(eventPackageName)
-            eventPackageName == packageName && !eventClassName.contains("MainActivity") -> setOf(
-                InstagramPackageConfig.PACKAGE_NAME
-            )
-            else -> emptySet()
+            eventPackageName == InstagramPackageConfig.PACKAGE_NAME -> {
+                if (activeRoot.packageNameString() == InstagramPackageConfig.PACKAGE_NAME) {
+                    activeRoot
+                } else {
+                    matchingWindowRoot { it == InstagramPackageConfig.PACKAGE_NAME } ?: activeRoot
+                }
+            }
+            BrowserPackageConfig.isSupported(eventPackageName) -> {
+                if (BrowserPackageConfig.isSupported(activeRoot.packageNameString())) {
+                    activeRoot
+                } else {
+                    matchingWindowRoot(BrowserPackageConfig::isSupported) ?: activeRoot
+                }
+            }
+            SettingsPackageConfig.isSupported(eventPackageName) -> {
+                if (SettingsPackageConfig.isSupported(activeRoot.packageNameString())) {
+                    activeRoot
+                } else {
+                    matchingWindowRoot(SettingsPackageConfig::isSupported) ?: activeRoot
+                }
+            }
+            eventPackageName == packageName && !eventClassName.contains("MainActivity") -> {
+                matchingWindowRoot { rootPackage ->
+                    rootPackage == InstagramPackageConfig.PACKAGE_NAME ||
+                        SettingsPackageConfig.isSupported(rootPackage)
+                } ?: activeRoot
+            }
+            else -> activeRoot
         }
     }
 

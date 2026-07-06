@@ -23,7 +23,7 @@ private val DarkColorScheme = darkColorScheme(
 )
 
 @Composable
-fun UnreelTheme(
+fun WeLiveTheme(
     darkTheme: Boolean = true,
     // Dynamic color is available on Android 12+
     dynamicColor: Boolean = false,
