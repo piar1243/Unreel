@@ -3,6 +3,8 @@ package com.example.welive.detection
 enum class Platform {
     INSTAGRAM,
     INSTAGRAM_WEB,
+    YOUTUBE,
+    YOUTUBE_WEB,
     SETTINGS,
     UNKNOWN
 }
@@ -17,6 +19,8 @@ enum class ContentSurface {
     INSTAGRAM_PROFILE,
     INSTAGRAM_DMS,
     INSTAGRAM_WEB,
+    YOUTUBE_APP,
+    YOUTUBE_SHORTS_WEB,
     SETTINGS_UNINSTALL_UNREEL,
     SETTINGS_ACCESSIBILITY_BLOCKER,
     SETTINGS_SAFE,

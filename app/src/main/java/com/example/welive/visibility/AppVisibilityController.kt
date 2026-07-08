@@ -3,6 +3,7 @@ package com.example.welive.visibility
 import android.content.ComponentName
 import android.content.Context
 import android.content.Intent
+import android.content.pm.ApplicationInfo
 import android.content.pm.PackageManager
 import android.net.Uri
 import com.example.welive.MainActivity
@@ -14,7 +15,12 @@ class AppVisibilityController(
     private val launcherAlias = ComponentName(context, LAUNCHER_ALIAS_CLASS_NAME)
 
     fun syncLauncherVisibility(hidden: Boolean) {
-        val targetState = if (hidden) {
+        // Keep Android Studio debug installs launchable even when the user-facing
+        // hide-icon setting is enabled. Release builds retain the locked-down behavior.
+        val isDebuggable =
+            context.applicationInfo.flags and ApplicationInfo.FLAG_DEBUGGABLE != 0
+        val shouldHideLauncher = hidden && !isDebuggable
+        val targetState = if (shouldHideLauncher) {
             PackageManager.COMPONENT_ENABLED_STATE_DISABLED
         } else {
             PackageManager.COMPONENT_ENABLED_STATE_ENABLED

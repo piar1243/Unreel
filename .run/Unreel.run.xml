@@ -1,0 +1,13 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<component name="ProjectRunConfigurationManager">
+  <configuration default="false" name="Unreel" type="AndroidRunConfigurationType" factoryName="Android App">
+    <module name="Unreel.app" />
+    <option name="ANDROID_RUN_CONFIGURATION_SCHEMA_VERSION" value="1" />
+    <option name="DEPLOY" value="true" />
+    <option name="MODE" value="specific_activity" />
+    <option name="ACTIVITY_CLASS" value="com.example.welive.MainActivity" />
+    <method v="2">
+      <option name="Android.Gradle.BeforeRunTask" enabled="true" />
+    </method>
+  </configuration>
+</component>

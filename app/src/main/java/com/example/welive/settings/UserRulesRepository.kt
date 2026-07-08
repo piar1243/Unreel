@@ -16,6 +16,8 @@ class UserRulesRepository(private val context: Context) {
     private object Keys {
         val BlockInstagramReels = booleanPreferencesKey("block_instagram_reels")
         val BlockInstagramWebsite = booleanPreferencesKey("block_instagram_website")
+        val BlockYouTubeApp = booleanPreferencesKey("block_youtube_app")
+        val BlockYouTubeShortsWebsite = booleanPreferencesKey("block_youtube_shorts_website")
         val AppSecurityEnabled = booleanPreferencesKey("app_security_enabled")
         val AppAccessPinHash = stringPreferencesKey("app_access_pin_hash")
         val AppAccessPinSalt = stringPreferencesKey("app_access_pin_salt")
@@ -47,6 +49,8 @@ class UserRulesRepository(private val context: Context) {
         AppSettings(
             blockInstagramReels = preferences[Keys.BlockInstagramReels] ?: true,
             blockInstagramWebsite = preferences[Keys.BlockInstagramWebsite] ?: true,
+            blockYouTubeApp = preferences[Keys.BlockYouTubeApp] ?: true,
+            blockYouTubeShortsWebsite = preferences[Keys.BlockYouTubeShortsWebsite] ?: true,
             appSecurityEnabled = preferences[Keys.AppSecurityEnabled] ?: false,
             appAccessPinHash = preferences[Keys.AppAccessPinHash] ?: "",
             appAccessPinSalt = preferences[Keys.AppAccessPinSalt] ?: "",
@@ -81,6 +85,14 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setBlockInstagramWebsite(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.BlockInstagramWebsite] = enabled }
+    }
+
+    suspend fun setBlockYouTubeApp(enabled: Boolean) {
+        context.weLiveDataStore.edit { it[Keys.BlockYouTubeApp] = enabled }
+    }
+
+    suspend fun setBlockYouTubeShortsWebsite(enabled: Boolean) {
+        context.weLiveDataStore.edit { it[Keys.BlockYouTubeShortsWebsite] = enabled }
     }
 
     suspend fun setAppLockDurationHours(hours: Int) {

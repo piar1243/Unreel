@@ -6,6 +6,8 @@ import java.time.ZonedDateTime
 data class AppSettings(
     val blockInstagramReels: Boolean = true,
     val blockInstagramWebsite: Boolean = true,
+    val blockYouTubeApp: Boolean = true,
+    val blockYouTubeShortsWebsite: Boolean = true,
     val appSecurityEnabled: Boolean = false,
     val appAccessPinHash: String = "",
     val appAccessPinSalt: String = "",

@@ -14,7 +14,7 @@ import android.widget.TextView
 import com.example.welive.detection.WindowNodeFeature
 import com.example.welive.detection.WindowSnapshot
 
-class InstagramWebOverlayController(
+class YouTubeShortsOverlayController(
     private val service: AccessibilityService
 ) {
     private val windowManager = service.getSystemService(WindowManager::class.java)
@@ -34,8 +34,8 @@ class InstagramWebOverlayController(
             return
         }
 
-        val view = overlayView
-        if (view == null) {
+        val currentView = overlayView
+        if (currentView == null) {
             val newView = buildOverlay(onOpenSettings)
             overlayView = newView
             isDismissing = false
@@ -45,7 +45,7 @@ class InstagramWebOverlayController(
         }
 
         holdSolid()
-        windowManager.updateViewLayout(view, overlayLayoutParams(region))
+        windowManager.updateViewLayout(currentView, overlayLayoutParams(region))
     }
 
     fun holdSolid() {
@@ -82,15 +82,14 @@ class InstagramWebOverlayController(
             isLongClickable = true
             isFocusable = false
 
-            val accent = View(service).apply {
-                setBackgroundColor(Color.rgb(0, 229, 160))
-            }
-            addView(accent, LinearLayout.LayoutParams(80.dp(), 4.dp()).apply {
+            addView(View(service).apply {
+                setBackgroundColor(Color.rgb(255, 45, 85))
+            }, LinearLayout.LayoutParams(80.dp(), 4.dp()).apply {
                 bottomMargin = 24.dp()
             })
 
             addView(TextView(service).apply {
-                text = "Instagram Website Blocked"
+                text = "YouTube Shorts Blocked"
                 setTextColor(Color.WHITE)
                 textSize = 26f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
@@ -101,7 +100,7 @@ class InstagramWebOverlayController(
             ))
 
             addView(TextView(service).apply {
-                text = "Browser controls stay available."
+                text = "Long-form YouTube remains available."
                 setTextColor(Color.rgb(190, 190, 196))
                 textSize = 16f
                 gravity = Gravity.CENTER
@@ -111,19 +110,7 @@ class InstagramWebOverlayController(
                 LinearLayout.LayoutParams.WRAP_CONTENT
             ))
 
-            val actions = LinearLayout(service).apply {
-                orientation = LinearLayout.HORIZONTAL
-                gravity = Gravity.CENTER
-            }
-            addView(actions, LinearLayout.LayoutParams(
-                LinearLayout.LayoutParams.MATCH_PARENT,
-                LinearLayout.LayoutParams.WRAP_CONTENT
-            ))
-
-            actions.addView(actionButton("Settings", inverted = false) {
-                onOpenSettings()
-                dismiss()
-            })
+            addView(actionButton("Settings", onOpenSettings))
         }
     }
 
@@ -163,7 +150,7 @@ class InstagramWebOverlayController(
         val displayHeight = service.resources.displayMetrics.heightPixels
         return service.windows
             .asSequence()
-            .filter { window -> window.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
+            .filter { it.type == AccessibilityWindowInfo.TYPE_INPUT_METHOD }
             .mapNotNull { window ->
                 val bounds = Rect()
                 window.getBoundsInScreen(bounds)
@@ -179,7 +166,7 @@ class InstagramWebOverlayController(
 
     private fun WindowNodeFeature.looksLikeBrowserChrome(): Boolean {
         val normalizedId = viewId.orEmpty().lowercase()
-        return BROWSER_CHROME_ID_MARKERS.any { marker -> normalizedId.contains(marker) }
+        return BROWSER_CHROME_ID_MARKERS.any(normalizedId::contains)
     }
 
     private fun overlayLayoutParams(region: ScreenRegion): WindowManager.LayoutParams {
@@ -200,20 +187,19 @@ class InstagramWebOverlayController(
 
     private fun actionButton(
         label: String,
-        inverted: Boolean,
         onClick: () -> Unit
     ): Button {
         return Button(service).apply {
             text = label
             isAllCaps = false
             textSize = 14f
-            setTextColor(if (inverted) Color.BLACK else Color.WHITE)
-            setBackgroundColor(if (inverted) Color.WHITE else Color.rgb(28, 28, 32))
-            setOnClickListener { onClick() }
-            layoutParams = LinearLayout.LayoutParams(132.dp(), 48.dp()).apply {
-                leftMargin = 6.dp()
-                rightMargin = 6.dp()
+            setTextColor(Color.WHITE)
+            setBackgroundColor(Color.rgb(28, 28, 32))
+            setOnClickListener {
+                onClick()
+                dismiss()
             }
+            layoutParams = LinearLayout.LayoutParams(132.dp(), 48.dp())
         }
     }
 
@@ -222,7 +208,6 @@ class InstagramWebOverlayController(
     }
 
     private companion object {
-        // Tune these two values to move the Instagram website blocker edges.
         const val WEBSITE_BLOCK_TOP_DISTANCE_DP = 60
         const val WEBSITE_BLOCK_BOTTOM_DISTANCE_DP = 54
         const val MIN_BLOCK_HEIGHT_DP = 270

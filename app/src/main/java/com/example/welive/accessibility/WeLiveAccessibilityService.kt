@@ -21,9 +21,11 @@ import com.example.welive.detection.platforms.settings.SettingsUninstallDetector
 import com.example.welive.detection.platforms.settings.SettingsPackageConfig
 import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 import com.example.welive.detection.platforms.instagramweb.InstagramWebDetector
+import com.example.welive.detection.platforms.youtube.YouTubeDetector
 import com.example.welive.intervention.HomeFeedAudioController
 import com.example.welive.intervention.HomeFeedOverlayController
 import com.example.welive.intervention.InstagramWebOverlayController
+import com.example.welive.intervention.YouTubeShortsOverlayController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.SystemGrayscaleController
 import com.example.welive.settings.AppSettings
@@ -46,6 +48,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private lateinit var homeFeedAudioController: HomeFeedAudioController
     private lateinit var homeFeedOverlayController: HomeFeedOverlayController
     private lateinit var instagramWebOverlayController: InstagramWebOverlayController
+    private lateinit var youTubeShortsOverlayController: YouTubeShortsOverlayController
     private lateinit var systemGrayscaleController: SystemGrayscaleController
     private lateinit var deviceOwnerPolicyController: DeviceOwnerPolicyController
     private lateinit var eventRouter: AccessibilityEventRouter
@@ -79,6 +82,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
             }
         )
         instagramWebOverlayController = InstagramWebOverlayController(this)
+        youTubeShortsOverlayController = YouTubeShortsOverlayController(this)
         val audioManager = getSystemService(AudioManager::class.java)
         eventRouter = AccessibilityEventRouter(
             snapshotReader = WindowSnapshotReader(
@@ -87,15 +91,18 @@ class WeLiveAccessibilityService : AccessibilityService() {
             detectors = listOf(
                 InstagramDetector(),
                 SettingsUninstallDetector(),
-                InstagramWebDetector()
+                InstagramWebDetector(),
+                YouTubeDetector()
             ),
             overlayController = overlayController,
             homeFeedAudioController = homeFeedAudioController,
             homeFeedOverlayController = homeFeedOverlayController,
             instagramWebOverlayController = instagramWebOverlayController,
+            youTubeShortsOverlayController = youTubeShortsOverlayController,
             homeFeedClassifier = InstagramHomeFeedClassifier(),
             homeFeedRegionResolver = InstagramHomeFeedRegionResolver(),
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
+            performHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
             onAllowOneMinute = {
                 serviceScope.launch { settingsRepository.allowTemporarily(60_000L) }
             },
@@ -148,6 +155,9 @@ class WeLiveAccessibilityService : AccessibilityService() {
         }
         if (::instagramWebOverlayController.isInitialized) {
             instagramWebOverlayController.dismiss()
+        }
+        if (::youTubeShortsOverlayController.isInitialized) {
+            youTubeShortsOverlayController.dismiss()
         }
         if (::homeFeedAudioController.isInitialized) {
             homeFeedAudioController.restore()

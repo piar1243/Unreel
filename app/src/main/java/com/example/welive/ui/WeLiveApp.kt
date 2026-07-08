@@ -114,6 +114,7 @@ fun WeLiveApp() {
     val latestSettingsSnapshot by TrainingCaptureState.latestSettingsSnapshot.collectAsState()
     val scope = rememberCoroutineScope()
     var showInstagramSettings by remember { mutableStateOf(false) }
+    var showYouTubeSettings by remember { mutableStateOf(false) }
     var trainingCount by remember { mutableStateOf(0) }
     var trainingMessage by remember { mutableStateOf("Capture Instagram, return here, tap a label.") }
     var settingsTrainingCount by remember { mutableStateOf(0) }
@@ -292,6 +293,12 @@ fun WeLiveApp() {
                         onBlockWebsiteChange = { enabled ->
                             scope.launch { repository.setBlockInstagramWebsite(enabled) }
                         },
+                        onBlockYouTubeAppChange = { enabled ->
+                            scope.launch { repository.setBlockYouTubeApp(enabled) }
+                        },
+                        onBlockYouTubeShortsWebsiteChange = { enabled ->
+                            scope.launch { repository.setBlockYouTubeShortsWebsite(enabled) }
+                        },
                         onGrayscaleInstagramAppChange = { enabled ->
                             scope.launch { repository.setGrayscaleInstagramApp(enabled) }
                         },
@@ -335,6 +342,10 @@ fun WeLiveApp() {
                         showInstagramSettings = showInstagramSettings,
                         onInstagramSettingsClick = {
                             showInstagramSettings = !showInstagramSettings
+                        },
+                        showYouTubeSettings = showYouTubeSettings,
+                        onYouTubeSettingsClick = {
+                            showYouTubeSettings = !showYouTubeSettings
                         }
                     )
                 }
@@ -1074,6 +1085,8 @@ private fun RulePanel(
     settings: AppSettings,
     onBlockReelsChange: (Boolean) -> Unit,
     onBlockWebsiteChange: (Boolean) -> Unit,
+    onBlockYouTubeAppChange: (Boolean) -> Unit,
+    onBlockYouTubeShortsWebsiteChange: (Boolean) -> Unit,
     onGrayscaleInstagramAppChange: (Boolean) -> Unit,
     onLimitInstagramOpensPerDayChange: (Boolean) -> Unit,
     onInstagramDailyOpenLimitChange: (Int) -> Unit,
@@ -1089,7 +1102,9 @@ private fun RulePanel(
     onPulseBlockScreenOnReverseChange: (Boolean) -> Unit,
     openLimitResetCountdown: String,
     showInstagramSettings: Boolean,
-    onInstagramSettingsClick: () -> Unit
+    onInstagramSettingsClick: () -> Unit,
+    showYouTubeSettings: Boolean,
+    onYouTubeSettingsClick: () -> Unit
 ) {
     val scheduleWindows = settings.instagramAccessSchedule.ifEmpty {
         InstagramAccessScheduleCodec.defaultWindows()
@@ -1238,6 +1253,72 @@ private fun RulePanel(
                 checked = settings.blockInstagramSearchGrid,
                 accent = SignalRed,
                 onCheckedChange = onBlockSearchGridChange
+            )
+        }
+
+        Spacer(modifier = Modifier.height(16.dp))
+        Box(
+            modifier = Modifier
+                .fillMaxWidth()
+                .height(1.dp)
+                .background(Color.White.copy(alpha = 0.08f))
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                modifier = Modifier.weight(1f),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(8.dp, 42.dp)
+                        .clip(RoundedCornerShape(6.dp))
+                        .background(SignalRed)
+                )
+                Column {
+                    Text("YouTube", color = Paper, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        text = if (showYouTubeSettings) {
+                            "Sub-settings open"
+                        } else {
+                            "App blocked, long-form web available"
+                        },
+                        color = Steel,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
+            }
+            IconButton(onClick = onYouTubeSettingsClick) {
+                Text(
+                    text = "Edit",
+                    color = if (showYouTubeSettings) SignalRed else Paper,
+                    style = MaterialTheme.typography.labelLarge
+                )
+            }
+        }
+
+        if (showYouTubeSettings) {
+            Spacer(modifier = Modifier.height(14.dp))
+            ToggleRow(
+                label = "Block YouTube App",
+                detail = "Returns Home whenever the native YouTube app opens",
+                checked = settings.blockYouTubeApp,
+                accent = SignalRed,
+                onCheckedChange = onBlockYouTubeAppChange
+            )
+            ToggleRow(
+                label = "Block Web Shorts",
+                detail = "Blocks loaded youtube.com/shorts pages only",
+                checked = settings.blockYouTubeShortsWebsite,
+                accent = SignalCyan,
+                onCheckedChange = onBlockYouTubeShortsWebsiteChange
             )
         }
     }
