@@ -13,3 +13,10 @@
 .externalNativeBuild
 .cxx
 local.properties
+
+# Local debug captures and reference media
+home_debug_*.jsonl
+instagram_snapshots.jsonl
+reelsidebuttonsexample*.jpg
+Screenshot_*_Instagram.jpg
+u252982*.png
