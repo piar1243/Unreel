@@ -9,15 +9,10 @@ import android.provider.Settings
 import androidx.activity.compose.rememberLauncherForActivityResult
 import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
-import androidx.compose.animation.core.RepeatMode
-import androidx.compose.animation.core.animateFloat
-import androidx.compose.animation.core.animateFloatAsState
-import androidx.compose.animation.core.infiniteRepeatable
-import androidx.compose.animation.core.rememberInfiniteTransition
-import androidx.compose.animation.core.tween
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
 import androidx.compose.foundation.border
+import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
 import androidx.compose.foundation.layout.Box
 import androidx.compose.foundation.layout.Column
@@ -27,16 +22,18 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
-import androidx.compose.foundation.layout.offset
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
 import androidx.compose.foundation.lazy.items
+import androidx.compose.foundation.lazy.rememberLazyListState
 import androidx.compose.foundation.shape.RoundedCornerShape
 import androidx.compose.material3.Button
 import androidx.compose.material3.ButtonDefaults
 import androidx.compose.material3.IconButton
 import androidx.compose.material3.MaterialTheme
+import androidx.compose.material3.Slider
+import androidx.compose.material3.SliderDefaults
 import androidx.compose.material3.Surface
 import androidx.compose.material3.Switch
 import androidx.compose.material3.SwitchDefaults
@@ -56,7 +53,6 @@ import androidx.compose.runtime.setValue
 import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
-import androidx.compose.ui.graphics.Brush
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.text.input.KeyboardType
@@ -113,6 +109,7 @@ fun WeLiveApp() {
     val latestSnapshot by TrainingCaptureState.latestInstagramSnapshot.collectAsState()
     val latestSettingsSnapshot by TrainingCaptureState.latestSettingsSnapshot.collectAsState()
     val scope = rememberCoroutineScope()
+    val dashboardListState = rememberLazyListState()
     var showInstagramSettings by remember { mutableStateOf(false) }
     var showYouTubeSettings by remember { mutableStateOf(false) }
     var trainingCount by remember { mutableStateOf(0) }
@@ -122,7 +119,8 @@ fun WeLiveApp() {
         mutableStateOf("Open Unreel uninstall or Accessibility permission screens, return here, tap a label.")
     }
     var openLimitResetCountdown by remember { mutableStateOf(formatOpenLimitResetCountdown()) }
-    var selectedTab by remember { mutableStateOf(AppDashboardTab.ProtectedApps) }
+    var selectedTab by remember { mutableStateOf(AppDashboardTab.Home) }
+    var onboardingWeeklyMinutes by rememberSaveable { mutableStateOf(14 * 60) }
     var sessionUnlocked by rememberSaveable { mutableStateOf(false) }
     var unlockPin by rememberSaveable { mutableStateOf("") }
     var unlockMessage by remember { mutableStateOf<String?>(null) }
@@ -204,6 +202,10 @@ fun WeLiveApp() {
         appVisibilityController.syncLauncherVisibility(settings.hideLauncherIcon)
     }
 
+    LaunchedEffect(selectedTab) {
+        dashboardListState.scrollToItem(0)
+    }
+
     DisposableEffect(lifecycleOwner, settings.appSecurityEnabled) {
         val observer = LifecycleEventObserver { _, event ->
             if (event == Lifecycle.Event.ON_STOP && settings.appSecurityEnabled) {
@@ -265,7 +267,21 @@ fun WeLiveApp() {
             return@Surface
         }
 
+        if (!settings.onboardingCompleted) {
+            OnboardingScreen(
+                averageWeeklyMinutes = onboardingWeeklyMinutes,
+                onAverageWeeklyMinutesChange = { onboardingWeeklyMinutes = it },
+                onComplete = {
+                    scope.launch {
+                        repository.completeOnboarding(onboardingWeeklyMinutes)
+                    }
+                }
+            )
+            return@Surface
+        }
+
         LazyColumn(
+            state = dashboardListState,
             modifier = Modifier
                 .fillMaxSize()
                 .background(Carbon),
@@ -283,7 +299,14 @@ fun WeLiveApp() {
                 )
             }
 
-            if (selectedTab == AppDashboardTab.ProtectedApps) {
+            if (selectedTab == AppDashboardTab.Home) {
+                item {
+                    HomeDashboard(
+                        settings = settings,
+                        currentTimeMillis = currentTimeMillis
+                    )
+                }
+            } else if (selectedTab == AppDashboardTab.ProtectedApps) {
                 item {
                     RulePanel(
                         settings = settings,
@@ -542,9 +565,495 @@ fun WeLiveApp() {
 }
 
 private enum class AppDashboardTab(val title: String, val subtitle: String) {
-    ProtectedApps("Apps", "Instagram rules"),
+    Home("Home", "Your progress"),
+    ProtectedApps("Apps", "Protection rules"),
     Security("Security", "Lock and permissions"),
     Data("Data", "Training, recorder, diagnostics")
+}
+
+@Composable
+private fun OnboardingScreen(
+    averageWeeklyMinutes: Int,
+    onAverageWeeklyMinutesChange: (Int) -> Unit,
+    onComplete: () -> Unit
+) {
+    var step by rememberSaveable { mutableStateOf(0) }
+    val titles = listOf(
+        "Start with your real baseline.",
+        "Use YouTube on the web.",
+        "Keep Instagram in the app."
+    )
+    val descriptions = listOf(
+        "Your answer powers the reclaimed-time estimate on Home. You can refine this model as Unreel grows.",
+        "Unreel blocks the native YouTube app, then filters Shorts by their /shorts URL while regular web videos remain available.",
+        "Instagram protection is strongest in the Android app, where Unreel can distinguish Reels, search grids, stories, and messages."
+    )
+
+    Column(
+        modifier = Modifier
+            .fillMaxSize()
+            .background(Carbon)
+            .padding(horizontal = 26.dp, vertical = 28.dp)
+    ) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.CenterVertically
+        ) {
+            Row(
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(12.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(42.dp)
+                        .clip(RoundedCornerShape(8.dp))
+                        .background(Paper),
+                    contentAlignment = Alignment.Center
+                ) {
+                    Text(
+                        text = "U",
+                        color = Ink,
+                        style = MaterialTheme.typography.titleLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                }
+                Column {
+                    Text(
+                        text = "UNREEL",
+                        color = Paper,
+                        style = MaterialTheme.typography.titleMedium,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "INITIAL SETUP",
+                        color = Steel,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                }
+            }
+            Text(
+                text = "0${step + 1} / 03",
+                color = SignalGreen,
+                style = MaterialTheme.typography.labelLarge,
+                fontWeight = FontWeight.Bold
+            )
+        }
+
+        Spacer(modifier = Modifier.height(46.dp))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
+        ) {
+            repeat(3) { index ->
+                Box(
+                    modifier = Modifier
+                        .weight(if (index == step) 2f else 1f)
+                        .height(3.dp)
+                        .background(
+                            if (index <= step) SignalGreen else Graphite,
+                            RoundedCornerShape(3.dp)
+                        )
+                )
+            }
+        }
+
+        Spacer(modifier = Modifier.height(30.dp))
+        Text(
+            text = titles[step],
+            color = Paper,
+            style = MaterialTheme.typography.headlineLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(12.dp))
+        Text(
+            text = descriptions[step],
+            color = Steel,
+            style = MaterialTheme.typography.bodyLarge
+        )
+
+        Spacer(modifier = Modifier.height(36.dp))
+
+        when (step) {
+            0 -> {
+                Column(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .background(Ink, RoundedCornerShape(8.dp))
+                        .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+                        .padding(20.dp)
+                ) {
+                    Text(
+                        text = "AVERAGE WEEKLY SHORT-FORM TIME",
+                        color = Steel,
+                        style = MaterialTheme.typography.labelMedium
+                    )
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Text(
+                        text = formatWeeklyMinutes(averageWeeklyMinutes),
+                        color = Paper,
+                        style = MaterialTheme.typography.headlineLarge,
+                        fontWeight = FontWeight.Bold
+                    )
+                    Text(
+                        text = "${formatDailyBaseline(averageWeeklyMinutes)} per day",
+                        color = SignalCyan,
+                        style = MaterialTheme.typography.titleSmall
+                    )
+                    Spacer(modifier = Modifier.height(18.dp))
+                    Slider(
+                        value = averageWeeklyMinutes.toFloat(),
+                        onValueChange = { value ->
+                            onAverageWeeklyMinutesChange(
+                                ((value / 30f).toInt() * 30).coerceIn(0, MAX_WEEKLY_MINUTES)
+                            )
+                        },
+                        valueRange = 0f..MAX_WEEKLY_MINUTES.toFloat(),
+                        steps = 139,
+                        colors = SliderDefaults.colors(
+                            thumbColor = SignalGreen,
+                            activeTrackColor = SignalGreen,
+                            inactiveTrackColor = Graphite
+                        )
+                    )
+                    Row(
+                        modifier = Modifier.fillMaxWidth(),
+                        horizontalArrangement = Arrangement.SpaceBetween
+                    ) {
+                        Text("0h", color = Steel, style = MaterialTheme.typography.labelMedium)
+                        Text("70h", color = Steel, style = MaterialTheme.typography.labelMedium)
+                    }
+                }
+            }
+            1 -> SetupInstruction(
+                index = "01",
+                title = "Open youtube.com",
+                detail = "Long-form viewing stays available. A Shorts URL is covered and reversed automatically.",
+                accent = SignalRed
+            )
+            else -> SetupInstruction(
+                index = "02",
+                title = "Use the Instagram app",
+                detail = "The native app gives Unreel the strongest surface-level detection and the fewest false positives.",
+                accent = SignalCyan
+            )
+        }
+
+        Spacer(modifier = Modifier.weight(1f))
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            if (step > 0) {
+                Button(
+                    onClick = { step -= 1 },
+                    modifier = Modifier.weight(0.4f),
+                    shape = RoundedCornerShape(8.dp),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = Graphite,
+                        contentColor = Paper
+                    )
+                ) {
+                    Text("Back")
+                }
+            }
+            Button(
+                onClick = {
+                    if (step < 2) {
+                        step += 1
+                    } else {
+                        onComplete()
+                    }
+                },
+                modifier = Modifier.weight(1f),
+                shape = RoundedCornerShape(8.dp),
+                colors = ButtonDefaults.buttonColors(
+                    containerColor = Paper,
+                    contentColor = Ink
+                )
+            ) {
+                Text(if (step < 2) "Continue" else "Enter Unreel")
+            }
+        }
+    }
+}
+
+@Composable
+private fun SetupInstruction(
+    index: String,
+    title: String,
+    detail: String,
+    accent: Color
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Ink, RoundedCornerShape(8.dp))
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(20.dp),
+        horizontalArrangement = Arrangement.spacedBy(18.dp),
+        verticalAlignment = Alignment.Top
+    ) {
+        Text(
+            text = index,
+            color = accent,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(
+                text = title,
+                color = Paper,
+                style = MaterialTheme.typography.titleLarge,
+                fontWeight = FontWeight.SemiBold
+            )
+            Spacer(modifier = Modifier.height(8.dp))
+            Text(text = detail, color = Steel)
+        }
+    }
+}
+
+@Composable
+private fun HomeDashboard(
+    settings: AppSettings,
+    currentTimeMillis: Long
+) {
+    val totalBlocks = settings.totalProtectionCount()
+    val timeSavedMillis = settings.estimatedTimeSavedMillis(currentTimeMillis)
+    val activeDays = (
+        (currentTimeMillis - settings.onboardingCompletedAtMillis).coerceAtLeast(0L) /
+            DAY_IN_MILLIS
+        ) + 1L
+
+    Column(verticalArrangement = Arrangement.spacedBy(18.dp)) {
+        Column(
+            modifier = Modifier
+                .fillMaxWidth()
+                .background(Paper, RoundedCornerShape(8.dp))
+                .padding(22.dp)
+        ) {
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Text(
+                    text = "ATTENTION RECLAIMED",
+                    color = Ink.copy(alpha = 0.62f),
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+                Text(
+                    text = "DAY $activeDays",
+                    color = SignalRed,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.Bold
+                )
+            }
+            Spacer(modifier = Modifier.height(24.dp))
+            Text(
+                text = formatDurationCompact(timeSavedMillis),
+                color = Ink,
+                style = MaterialTheme.typography.headlineLarge,
+                fontWeight = FontWeight.Bold
+            )
+            Text(
+                text = "Estimated from your ${formatWeeklyMinutes(settings.averageWeeklyShortFormMinutes)} weekly baseline.",
+                color = Ink.copy(alpha = 0.64f),
+                style = MaterialTheme.typography.bodyLarge
+            )
+            Spacer(modifier = Modifier.height(24.dp))
+            Box(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .height(4.dp)
+                    .background(Ink.copy(alpha = 0.12f), RoundedCornerShape(4.dp))
+            ) {
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth(
+                            (totalBlocks / HOME_PROGRESS_BLOCK_TARGET.toFloat()).coerceIn(0.04f, 1f)
+                        )
+                        .height(4.dp)
+                        .background(SignalGreen, RoundedCornerShape(4.dp))
+                )
+            }
+        }
+
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(10.dp)
+        ) {
+            HomeMetric(
+                label = "BLOCKS",
+                value = totalBlocks.toString(),
+                detail = "all interventions",
+                accent = SignalGreen,
+                modifier = Modifier.weight(1f)
+            )
+            HomeMetric(
+                label = "EXPOSURE",
+                value = formatDurationCompact(settings.observedShortFormMillis),
+                detail = "short-form observed",
+                accent = SignalCyan,
+                modifier = Modifier.weight(1f)
+            )
+        }
+
+        ProtectionBreakdown(settings)
+        BestSetupStatus(settings)
+    }
+}
+
+@Composable
+private fun HomeMetric(
+    label: String,
+    value: String,
+    detail: String,
+    accent: Color,
+    modifier: Modifier = Modifier
+) {
+    Column(
+        modifier = modifier
+            .background(Ink, RoundedCornerShape(8.dp))
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(16.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(24.dp, 3.dp)
+                .background(accent, RoundedCornerShape(3.dp))
+        )
+        Spacer(modifier = Modifier.height(16.dp))
+        Text(label, color = Steel, style = MaterialTheme.typography.labelMedium)
+        Text(
+            text = value,
+            color = Paper,
+            style = MaterialTheme.typography.headlineMedium,
+            fontWeight = FontWeight.Bold
+        )
+        Text(detail, color = Steel, style = MaterialTheme.typography.labelMedium)
+    }
+}
+
+@Composable
+private fun ProtectionBreakdown(settings: AppSettings) {
+    val rows = listOf(
+        Triple("Instagram Reels", settings.instagramReelsBlockedCount, SignalGreen),
+        Triple("Instagram Search", settings.instagramSearchGridBlockedCount, SignalRed),
+        Triple("YouTube app", settings.youtubeAppBlockedCount, SignalCyan),
+        Triple("YouTube Shorts", settings.youtubeShortsBlockedCount, SignalRed)
+    )
+    val maxCount = rows.maxOfOrNull { it.second }?.coerceAtLeast(1) ?: 1
+
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Ink, RoundedCornerShape(8.dp))
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(14.dp)
+    ) {
+        Text(
+            text = "PROTECTION BREAKDOWN",
+            color = Steel,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
+        rows.forEach { (label, count, accent) ->
+            Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Row(
+                    modifier = Modifier.fillMaxWidth(),
+                    horizontalArrangement = Arrangement.SpaceBetween
+                ) {
+                    Text(label, color = Paper, style = MaterialTheme.typography.bodyMedium)
+                    Text(
+                        text = count.toString(),
+                        color = Paper,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+                Box(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .height(3.dp)
+                        .background(Graphite, RoundedCornerShape(3.dp))
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .fillMaxWidth(
+                                if (count == 0) 0f else count / maxCount.toFloat()
+                            )
+                            .height(3.dp)
+                            .background(accent, RoundedCornerShape(3.dp))
+                    )
+                }
+            }
+        }
+    }
+}
+
+@Composable
+private fun BestSetupStatus(settings: AppSettings) {
+    Column(
+        modifier = Modifier.fillMaxWidth(),
+        verticalArrangement = Arrangement.spacedBy(10.dp)
+    ) {
+        Text(
+            text = "BEST SETUP",
+            color = Steel,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
+        SetupStatusRow(
+            title = "YouTube on the web",
+            detail = "Native app entry is blocked",
+            active = settings.blockYouTubeApp
+        )
+        SetupStatusRow(
+            title = "Instagram in the app",
+            detail = "Instagram website is blocked",
+            active = settings.blockInstagramWebsite
+        )
+    }
+}
+
+@Composable
+private fun SetupStatusRow(
+    title: String,
+    detail: String,
+    active: Boolean
+) {
+    Row(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Ink, RoundedCornerShape(8.dp))
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(14.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Box(
+            modifier = Modifier
+                .size(9.dp)
+                .background(
+                    if (active) SignalGreen else Steel,
+                    RoundedCornerShape(5.dp)
+                )
+        )
+        Column(modifier = Modifier.weight(1f)) {
+            Text(title, color = Paper, fontWeight = FontWeight.SemiBold)
+            Text(detail, color = Steel, style = MaterialTheme.typography.labelMedium)
+        }
+        Text(
+            text = if (active) "READY" else "OFF",
+            color = if (active) SignalGreen else Steel,
+            style = MaterialTheme.typography.labelMedium,
+            fontWeight = FontWeight.Bold
+        )
+    }
 }
 
 @Composable
@@ -898,96 +1407,69 @@ private fun AppSecurityPanel(
 
 @Composable
 private fun Header(settings: AppSettings) {
-    val activeTarget by animateFloatAsState(
-        targetValue = if (settings.blockInstagramReels) 1f else 0.35f,
-        animationSpec = tween(durationMillis = 520),
-        label = "protection_intensity"
-    )
-    Box(
+    val protectionActive = settings.blockInstagramReels ||
+        settings.blockYouTubeApp ||
+        settings.blockYouTubeShortsWebsite
+    Row(
         modifier = Modifier
             .fillMaxWidth()
-            .padding(top = 10.dp)
-            .clip(RoundedCornerShape(8.dp))
-            .background(
-                Brush.linearGradient(
-                    colors = listOf(
-                        Ink,
-                        Color(0xFFEAF2FF),
-                        Color(0xFFFFEEF3)
-                    )
-                )
-            )
-            .border(1.dp, Ink, RoundedCornerShape(8.dp))
-            .padding(18.dp)
+            .padding(top = 8.dp, bottom = 2.dp),
+        verticalAlignment = Alignment.CenterVertically,
+        horizontalArrangement = Arrangement.SpaceBetween
     ) {
         Row(
             verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(14.dp),
-            modifier = Modifier.fillMaxWidth()
+            horizontalArrangement = Arrangement.spacedBy(12.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .size(58.dp)
+                    .size(38.dp)
                     .clip(RoundedCornerShape(8.dp))
-                    .background(Paper)
-                    .border(1.dp, Color.White.copy(alpha = 0.7f), RoundedCornerShape(8.dp))
+                    .background(Paper),
+                contentAlignment = Alignment.Center
             ) {
-                Box(
-                    modifier = Modifier
-                        .size(22.dp)
-                        .align(Alignment.Center)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SignalGreen.copy(alpha = activeTarget))
-                )
-                Box(
-                    modifier = Modifier
-                        .size(9.dp)
-                        .align(Alignment.TopEnd)
-                        .offset(x = (-10).dp, y = 10.dp)
-                        .clip(RoundedCornerShape(8.dp))
-                        .background(SignalCyan)
+                Text(
+                    text = "U",
+                    color = Ink,
+                    style = MaterialTheme.typography.titleMedium,
+                    fontWeight = FontWeight.Bold
                 )
             }
-            Column(modifier = Modifier.weight(1f)) {
+            Column {
                 Text(
                     text = "Unreel",
                     color = Paper,
-                    style = MaterialTheme.typography.headlineLarge
+                    style = MaterialTheme.typography.titleLarge,
+                    fontWeight = FontWeight.Bold
                 )
                 Text(
-                    text = "Shortform protection",
+                    text = "Attention protection",
                     color = Steel,
-                    style = MaterialTheme.typography.bodyLarge
+                    style = MaterialTheme.typography.labelMedium
                 )
             }
-            Text(
-                text = if (settings.blockInstagramReels) "Active" else "Paused",
-                color = Ink,
-                style = MaterialTheme.typography.labelLarge,
-                modifier = Modifier
-                    .clip(RoundedCornerShape(8.dp))
-                    .background(if (settings.blockInstagramReels) SignalGreen else Steel)
-                    .padding(horizontal = 12.dp, vertical = 8.dp)
-            )
         }
-        Box(
+        Row(
             modifier = Modifier
-                .fillMaxWidth()
-                .height(5.dp)
-                .align(Alignment.BottomCenter)
-                .offset(y = 18.dp)
-                .clip(RoundedCornerShape(6.dp))
-                .background(Color.White.copy(alpha = 0.75f))
+                .background(Ink, RoundedCornerShape(8.dp))
+                .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+                .padding(horizontal = 10.dp, vertical = 7.dp),
+            verticalAlignment = Alignment.CenterVertically,
+            horizontalArrangement = Arrangement.spacedBy(7.dp)
         ) {
             Box(
                 modifier = Modifier
-                    .fillMaxWidth(activeTarget)
-                    .height(5.dp)
+                    .size(7.dp)
                     .background(
-                        Brush.horizontalGradient(
-                            colors = listOf(SignalGreen, SignalRed, SignalCyan)
-                        )
+                        if (protectionActive) SignalGreen else Steel,
+                        RoundedCornerShape(4.dp)
                     )
+            )
+            Text(
+                text = if (protectionActive) "LIVE" else "PAUSED",
+                color = Paper,
+                style = MaterialTheme.typography.labelMedium,
+                fontWeight = FontWeight.Bold
             )
         }
     }
@@ -1001,45 +1483,32 @@ private fun DashboardTabSwitcher(
     Row(
         modifier = Modifier
             .fillMaxWidth()
-            .clip(RoundedCornerShape(8.dp))
-            .background(Ink)
-            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
-            .padding(5.dp),
-        horizontalArrangement = Arrangement.spacedBy(6.dp)
+            .border(
+                width = 1.dp,
+                color = Graphite,
+                shape = RoundedCornerShape(8.dp)
+            )
+            .padding(4.dp),
+        horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
         AppDashboardTab.entries.forEach { tab ->
             val active = tab == selectedTab
-            Button(
-                onClick = { onTabSelected(tab) },
-                modifier = Modifier.weight(1f),
-                shape = RoundedCornerShape(8.dp),
-                colors = ButtonDefaults.buttonColors(
-                    containerColor = if (active) Paper else Color.Transparent,
-                    contentColor = if (active) Ink else Paper
-                ),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(
-                    horizontal = 8.dp,
-                    vertical = 12.dp
-                )
+            Column(
+                modifier = Modifier
+                    .weight(1f)
+                    .clip(RoundedCornerShape(6.dp))
+                    .background(if (active) Paper else Color.Transparent)
+                    .clickable { onTabSelected(tab) }
+                    .padding(horizontal = 6.dp, vertical = 11.dp),
+                horizontalAlignment = Alignment.CenterHorizontally
             ) {
-                Column(
-                    horizontalAlignment = Alignment.CenterHorizontally,
-                    modifier = Modifier.fillMaxWidth()
-                ) {
-                    Text(
-                        text = tab.title,
-                        style = MaterialTheme.typography.titleSmall,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                    Text(
-                        text = tab.subtitle,
-                        style = MaterialTheme.typography.labelMedium,
-                        color = if (active) Ink.copy(alpha = 0.72f) else Steel,
-                        maxLines = 1,
-                        overflow = TextOverflow.Ellipsis
-                    )
-                }
+                Text(
+                    text = tab.title,
+                    style = MaterialTheme.typography.labelLarge,
+                    color = if (active) Ink else Steel,
+                    fontWeight = if (active) FontWeight.Bold else FontWeight.Medium,
+                    maxLines = 1
+                )
             }
         }
     }
@@ -1983,6 +2452,31 @@ private fun formatOpenLimitResetCountdown(now: LocalDateTime = LocalDateTime.now
     }
 }
 
+private fun formatWeeklyMinutes(totalMinutes: Int): String {
+    val safeMinutes = totalMinutes.coerceAtLeast(0)
+    val hours = safeMinutes / 60
+    val minutes = safeMinutes % 60
+    return when {
+        hours > 0 && minutes > 0 -> "${hours}h ${minutes}m"
+        hours > 0 -> "${hours}h"
+        else -> "${minutes}m"
+    }
+}
+
+private fun formatDailyBaseline(weeklyMinutes: Int): String {
+    return formatWeeklyMinutes((weeklyMinutes / 7f).toInt())
+}
+
+private fun formatDurationCompact(durationMillis: Long): String {
+    val totalMinutes = durationMillis.coerceAtLeast(0L) / 60_000L
+    val hours = totalMinutes / 60L
+    val minutes = totalMinutes % 60L
+    return when {
+        hours > 0L -> "${hours}h ${minutes}m"
+        else -> "${minutes}m"
+    }
+}
+
 private fun validatePinInputs(pin: String, confirmPin: String): String? {
     if (pin.length < MIN_PIN_LENGTH) {
         return "PIN must be at least $MIN_PIN_LENGTH digits."
@@ -2074,6 +2568,9 @@ private fun scheduleTimeFormatter(): DateTimeFormatter {
 
 private const val SCHEDULE_MINUTE_STEP = 15
 private const val MAX_SCHEDULE_WINDOWS = 4
+private const val MAX_WEEKLY_MINUTES = 70 * 60
+private const val HOME_PROGRESS_BLOCK_TARGET = 100
+private const val DAY_IN_MILLIS = 24L * 60L * 60L * 1000L
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 8
 private const val APP_UNINSTALL_BYPASS_DURATION_MILLIS = 2L * 60L * 1000L

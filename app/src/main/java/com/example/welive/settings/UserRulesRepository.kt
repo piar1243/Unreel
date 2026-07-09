@@ -7,6 +7,7 @@ import androidx.datastore.preferences.core.intPreferencesKey
 import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
+import com.example.welive.analytics.ProtectionEvent
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -18,6 +19,14 @@ class UserRulesRepository(private val context: Context) {
         val BlockInstagramWebsite = booleanPreferencesKey("block_instagram_website")
         val BlockYouTubeApp = booleanPreferencesKey("block_youtube_app")
         val BlockYouTubeShortsWebsite = booleanPreferencesKey("block_youtube_shorts_website")
+        val OnboardingCompleted = booleanPreferencesKey("onboarding_completed")
+        val AverageWeeklyShortFormMinutes = intPreferencesKey("average_weekly_short_form_minutes")
+        val OnboardingCompletedAtMillis = longPreferencesKey("onboarding_completed_at_millis")
+        val InstagramReelsBlockedCount = intPreferencesKey("instagram_reels_blocked_count")
+        val InstagramSearchGridBlockedCount = intPreferencesKey("instagram_search_grid_blocked_count")
+        val YouTubeAppBlockedCount = intPreferencesKey("youtube_app_blocked_count")
+        val YouTubeShortsBlockedCount = intPreferencesKey("youtube_shorts_blocked_count")
+        val ObservedShortFormMillis = longPreferencesKey("observed_short_form_millis")
         val AppSecurityEnabled = booleanPreferencesKey("app_security_enabled")
         val AppAccessPinHash = stringPreferencesKey("app_access_pin_hash")
         val AppAccessPinSalt = stringPreferencesKey("app_access_pin_salt")
@@ -51,6 +60,14 @@ class UserRulesRepository(private val context: Context) {
             blockInstagramWebsite = preferences[Keys.BlockInstagramWebsite] ?: true,
             blockYouTubeApp = preferences[Keys.BlockYouTubeApp] ?: true,
             blockYouTubeShortsWebsite = preferences[Keys.BlockYouTubeShortsWebsite] ?: true,
+            onboardingCompleted = preferences[Keys.OnboardingCompleted] ?: false,
+            averageWeeklyShortFormMinutes = preferences[Keys.AverageWeeklyShortFormMinutes] ?: 0,
+            onboardingCompletedAtMillis = preferences[Keys.OnboardingCompletedAtMillis] ?: 0L,
+            instagramReelsBlockedCount = preferences[Keys.InstagramReelsBlockedCount] ?: 0,
+            instagramSearchGridBlockedCount = preferences[Keys.InstagramSearchGridBlockedCount] ?: 0,
+            youtubeAppBlockedCount = preferences[Keys.YouTubeAppBlockedCount] ?: 0,
+            youtubeShortsBlockedCount = preferences[Keys.YouTubeShortsBlockedCount] ?: 0,
+            observedShortFormMillis = preferences[Keys.ObservedShortFormMillis] ?: 0L,
             appSecurityEnabled = preferences[Keys.AppSecurityEnabled] ?: false,
             appAccessPinHash = preferences[Keys.AppAccessPinHash] ?: "",
             appAccessPinSalt = preferences[Keys.AppAccessPinSalt] ?: "",
@@ -93,6 +110,35 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setBlockYouTubeShortsWebsite(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.BlockYouTubeShortsWebsite] = enabled }
+    }
+
+    suspend fun completeOnboarding(averageWeeklyMinutes: Int) {
+        context.weLiveDataStore.edit {
+            it[Keys.AverageWeeklyShortFormMinutes] = averageWeeklyMinutes.coerceIn(0, 10_080)
+            it[Keys.OnboardingCompletedAtMillis] = System.currentTimeMillis()
+            it[Keys.OnboardingCompleted] = true
+        }
+    }
+
+    suspend fun recordProtectionEvent(event: ProtectionEvent) {
+        context.weLiveDataStore.edit { preferences ->
+            val key = when (event) {
+                ProtectionEvent.INSTAGRAM_REEL -> Keys.InstagramReelsBlockedCount
+                ProtectionEvent.INSTAGRAM_SEARCH_GRID -> Keys.InstagramSearchGridBlockedCount
+                ProtectionEvent.YOUTUBE_APP -> Keys.YouTubeAppBlockedCount
+                ProtectionEvent.YOUTUBE_SHORT -> Keys.YouTubeShortsBlockedCount
+            }
+            preferences[key] = (preferences[key] ?: 0) + 1
+        }
+    }
+
+    suspend fun addObservedShortFormTime(durationMillis: Long) {
+        if (durationMillis <= 0L) return
+        context.weLiveDataStore.edit {
+            val safeDuration = durationMillis.coerceAtMost(MAX_EXPOSURE_SESSION_MILLIS)
+            it[Keys.ObservedShortFormMillis] =
+                (it[Keys.ObservedShortFormMillis] ?: 0L) + safeDuration
+        }
     }
 
     suspend fun setAppLockDurationHours(hours: Int) {
@@ -257,5 +303,6 @@ class UserRulesRepository(private val context: Context) {
 
     private companion object {
         const val HOUR_IN_MILLIS = 60L * 60L * 1000L
+        const val MAX_EXPOSURE_SESSION_MILLIS = 10L * 60L * 1000L
     }
 }

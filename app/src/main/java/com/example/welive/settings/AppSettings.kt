@@ -8,6 +8,14 @@ data class AppSettings(
     val blockInstagramWebsite: Boolean = true,
     val blockYouTubeApp: Boolean = true,
     val blockYouTubeShortsWebsite: Boolean = true,
+    val onboardingCompleted: Boolean = false,
+    val averageWeeklyShortFormMinutes: Int = 0,
+    val onboardingCompletedAtMillis: Long = 0L,
+    val instagramReelsBlockedCount: Int = 0,
+    val instagramSearchGridBlockedCount: Int = 0,
+    val youtubeAppBlockedCount: Int = 0,
+    val youtubeShortsBlockedCount: Int = 0,
+    val observedShortFormMillis: Long = 0L,
     val appSecurityEnabled: Boolean = false,
     val appAccessPinHash: String = "",
     val appAccessPinSalt: String = "",
@@ -71,5 +79,26 @@ data class AppSettings(
 
     fun instagramScheduleStatus(now: ZonedDateTime = ZonedDateTime.now()): InstagramScheduleStatus {
         return InstagramAccessScheduleEvaluator.status(instagramAccessSchedule, now)
+    }
+
+    fun totalProtectionCount(): Int {
+        return instagramReelsBlockedCount +
+            instagramSearchGridBlockedCount +
+            youtubeAppBlockedCount +
+            youtubeShortsBlockedCount
+    }
+
+    fun estimatedTimeSavedMillis(nowMillis: Long = System.currentTimeMillis()): Long {
+        if (!onboardingCompleted || onboardingCompletedAtMillis <= 0L) return 0L
+        val elapsedMillis = (nowMillis - onboardingCompletedAtMillis).coerceAtLeast(0L)
+        val baselineMillis = averageWeeklyShortFormMinutes.toLong() *
+            60_000L *
+            elapsedMillis /
+            WEEK_IN_MILLIS
+        return (baselineMillis - observedShortFormMillis).coerceAtLeast(0L)
+    }
+
+    private companion object {
+        const val WEEK_IN_MILLIS = 7L * 24L * 60L * 60L * 1000L
     }
 }

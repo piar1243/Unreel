@@ -2,6 +2,7 @@ package com.example.welive.accessibility
 
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import com.example.welive.analytics.ProtectionEvent
 import com.example.welive.detection.ContentDetector
 import com.example.welive.detection.ContentSurface
 import com.example.welive.detection.DetectionResult
@@ -41,6 +42,8 @@ class AccessibilityEventRouter(
     private val performHome: () -> Unit,
     private val onAllowOneMinute: () -> Unit,
     private val onOpenSettings: () -> Unit,
+    private val onProtectionEvent: (ProtectionEvent) -> Unit,
+    private val onShortFormExposure: (Long) -> Unit,
     private val appPackageName: String
 ) {
     private var lastProcessedAt = 0L
@@ -60,6 +63,8 @@ class AccessibilityEventRouter(
     private var lastYouTubeAppReturnAt = 0L
     private var lastYouTubeShortsBackAt = 0L
     private var youTubeShortsBackIssued = false
+    private var activeShortFormSurface: ContentSurface? = null
+    private var shortFormExposureStartedAt = 0L
     private var cachedHomeFeedRegion: ScreenRegion? = null
     private var cachedHomeFeedBlockerRegion: ScreenRegion? = null
     private var cachedHomeFeedStoryTapTargets: List<ScreenRegion> = emptyList()
@@ -299,6 +304,7 @@ class AccessibilityEventRouter(
         val homeFeedClassification = homeFeedClassifier.classify(snapshot)
 
         DetectionDiagnostics.record(result)
+        updateShortFormExposure(result.surface, now)
 
         val isInstagramReelsSurface = result.surface == ContentSurface.INSTAGRAM_REELS ||
             result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND
@@ -397,6 +403,7 @@ class AccessibilityEventRouter(
             clearHomeFeedBlock()
             if (now - lastYouTubeAppReturnAt > YOUTUBE_APP_RETURN_COOLDOWN_MS) {
                 lastYouTubeAppReturnAt = now
+                onProtectionEvent(ProtectionEvent.YOUTUBE_APP)
                 overlayController.pulseBlocked(
                     onCovered = performHome,
                     title = blockTitle,
@@ -444,7 +451,7 @@ class AccessibilityEventRouter(
                 homeFeedClassification = homeFeedClassification
             )
             clearHomeFeedBlock()
-            handleReverseFromBlockedSurface(
+            val reversed = handleReverseFromBlockedSurface(
                 now = now,
                 pulseBlockScreen = settings.pulseBlockScreenOnReverse,
                 blockTitle = blockTitle,
@@ -458,6 +465,15 @@ class AccessibilityEventRouter(
                     }
                 }
             )
+            if (reversed) {
+                onProtectionEvent(
+                    if (searchGridShouldBlock) {
+                        ProtectionEvent.INSTAGRAM_SEARCH_GRID
+                    } else {
+                        ProtectionEvent.INSTAGRAM_REEL
+                    }
+                )
+            }
             return
         }
 
@@ -506,6 +522,7 @@ class AccessibilityEventRouter(
             ) {
                 youTubeShortsBackIssued = true
                 lastYouTubeShortsBackAt = now
+                onProtectionEvent(ProtectionEvent.YOUTUBE_SHORT)
                 overlayController.runAfterOverlayEntrance {
                     performBack()
                 }
@@ -535,6 +552,15 @@ class AccessibilityEventRouter(
                 title = blockTitle,
                 body = blockBody
             )
+            if (newlyShown) {
+                onProtectionEvent(
+                    if (searchGridShouldBlock) {
+                        ProtectionEvent.INSTAGRAM_SEARCH_GRID
+                    } else {
+                        ProtectionEvent.INSTAGRAM_REEL
+                    }
+                )
+            }
             overlayController.holdSolid()
             if (
                 (reelsShouldBlock || searchGridShouldBlock) &&
@@ -699,6 +725,7 @@ class AccessibilityEventRouter(
     }
 
     private fun clearAllBlockers() {
+        endShortFormExposure(System.currentTimeMillis())
         clearHomeFeedBlock()
         clearInstagramWebBlock()
         clearYouTubeWebBlock()
@@ -830,18 +857,18 @@ class AccessibilityEventRouter(
         blockTitle: String,
         blockBody: String,
         afterBack: () -> Unit = {}
-    ) {
+    ): Boolean {
         val userNavigatedAfterBack = lastInstagramNavigationAt > lastBackAt + 250L
         if (!reverseArmed && userNavigatedAfterBack) {
             reverseArmed = true
         }
 
         if (!reverseArmed) {
-            return
+            return false
         }
 
         if (now < reverseCooldownUntil && !userNavigatedAfterBack) {
-            return
+            return false
         }
 
         reverseCooldownUntil = now + 500L
@@ -862,6 +889,31 @@ class AccessibilityEventRouter(
             performBack()
             afterBack()
         }
+        return true
+    }
+
+    private fun updateShortFormExposure(surface: ContentSurface, now: Long) {
+        val trackedSurface = surface.takeIf {
+            it == ContentSurface.INSTAGRAM_REELS ||
+                it == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND ||
+                it == ContentSurface.INSTAGRAM_SEARCH_REELS_GRID ||
+                it == ContentSurface.YOUTUBE_SHORTS_WEB
+        }
+        if (trackedSurface == activeShortFormSurface) return
+        endShortFormExposure(now)
+        if (trackedSurface != null) {
+            activeShortFormSurface = trackedSurface
+            shortFormExposureStartedAt = now
+        }
+    }
+
+    private fun endShortFormExposure(now: Long) {
+        val startedAt = shortFormExposureStartedAt
+        if (activeShortFormSurface != null && startedAt > 0L && now > startedAt) {
+            onShortFormExposure(now - startedAt)
+        }
+        activeShortFormSurface = null
+        shortFormExposureStartedAt = 0L
     }
 
     private fun clearFullScreenBlockState(

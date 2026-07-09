@@ -107,6 +107,14 @@ class WeLiveAccessibilityService : AccessibilityService() {
                 serviceScope.launch { settingsRepository.allowTemporarily(60_000L) }
             },
             onOpenSettings = { openAppSettings() },
+            onProtectionEvent = { event ->
+                serviceScope.launch { settingsRepository.recordProtectionEvent(event) }
+            },
+            onShortFormExposure = { durationMillis ->
+                serviceScope.launch {
+                    settingsRepository.addObservedShortFormTime(durationMillis)
+                }
+            },
             appPackageName = packageName
         )
 
