@@ -11,6 +11,7 @@ import androidx.activity.result.contract.ActivityResultContracts
 import androidx.compose.foundation.text.KeyboardOptions
 import androidx.compose.foundation.BorderStroke
 import androidx.compose.foundation.background
+import androidx.compose.foundation.Image
 import androidx.compose.foundation.border
 import androidx.compose.foundation.clickable
 import androidx.compose.foundation.layout.Arrangement
@@ -55,6 +56,7 @@ import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
 import androidx.compose.ui.platform.LocalContext
+import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
 import androidx.compose.ui.text.input.PasswordVisualTransformation
 import androidx.compose.ui.text.font.FontWeight
@@ -63,11 +65,9 @@ import androidx.compose.ui.unit.dp
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleEventObserver
 import androidx.lifecycle.compose.LocalLifecycleOwner
+import com.example.welive.detection.WindowSnapshot
 import com.example.welive.detection.DetectionResult
 import com.example.welive.detection.InterventionAction
-import com.example.welive.detection.WindowSnapshot
-import com.example.welive.diagnostics.DetectionDiagnostics
-import com.example.welive.diagnostics.HomeDebugRecorder
 import com.example.welive.diagnostics.HomeDebugRecorderState
 import com.example.welive.deviceowner.DeviceOwnerPolicyController
 import com.example.welive.deviceowner.UninstallProtectionStatus
@@ -76,6 +76,8 @@ import com.example.welive.settings.DailyScheduleWindow
 import com.example.welive.settings.InstagramAccessScheduleCodec
 import com.example.welive.settings.UserRulesRepository
 import com.example.welive.settings.crossesMidnight
+import com.example.welive.protection.ProtectedApp
+import com.example.welive.R
 import com.example.welive.training.TrainingCaptureState
 import com.example.welive.training.TrainingDataRepository
 import com.example.welive.ui.theme.Carbon
@@ -104,14 +106,11 @@ fun WeLiveApp() {
     val deviceOwnerPolicyController = remember { DeviceOwnerPolicyController(context.applicationContext) }
     val appVisibilityController = remember { AppVisibilityController(context.applicationContext) }
     val settings by repository.settings.collectAsState(initial = AppSettings())
-    val diagnostics by DetectionDiagnostics.recentResults.collectAsState()
-    val homeDebugState by HomeDebugRecorder.state.collectAsState()
     val latestSnapshot by TrainingCaptureState.latestInstagramSnapshot.collectAsState()
     val latestSettingsSnapshot by TrainingCaptureState.latestSettingsSnapshot.collectAsState()
     val scope = rememberCoroutineScope()
     val dashboardListState = rememberLazyListState()
-    var showInstagramSettings by remember { mutableStateOf(false) }
-    var showYouTubeSettings by remember { mutableStateOf(false) }
+    var expandedProtectedApp by remember { mutableStateOf<ProtectedApp?>(ProtectedApp.INSTAGRAM) }
     var trainingCount by remember { mutableStateOf(0) }
     var trainingMessage by remember { mutableStateOf("Capture Instagram, return here, tap a label.") }
     var settingsTrainingCount by remember { mutableStateOf(0) }
@@ -289,7 +288,17 @@ fun WeLiveApp() {
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             item {
-                Header(settings = settings)
+                Header(
+                    settings = settings,
+                    dataSelected = selectedTab == AppDashboardTab.Data,
+                    onDataClick = {
+                        selectedTab = if (selectedTab == AppDashboardTab.Data) {
+                            AppDashboardTab.Home
+                        } else {
+                            AppDashboardTab.Data
+                        }
+                    }
+                )
             }
 
             item {
@@ -308,16 +317,20 @@ fun WeLiveApp() {
                 }
             } else if (selectedTab == AppDashboardTab.ProtectedApps) {
                 item {
-                    RulePanel(
+                    ProtectedAppsPanel(
                         settings = settings,
+                        expandedApp = expandedProtectedApp,
+                        onExpandedAppChange = { app ->
+                            expandedProtectedApp = if (expandedProtectedApp == app) null else app
+                        },
+                        onTotalAppBlockChange = { app, enabled ->
+                            scope.launch { repository.setTotalAppBlock(app, enabled) }
+                        },
+                        onTotalWebsiteBlockChange = { app, enabled ->
+                            scope.launch { repository.setTotalWebsiteBlock(app, enabled) }
+                        },
                         onBlockReelsChange = { enabled ->
                             scope.launch { repository.setBlockInstagramReels(enabled) }
-                        },
-                        onBlockWebsiteChange = { enabled ->
-                            scope.launch { repository.setBlockInstagramWebsite(enabled) }
-                        },
-                        onBlockYouTubeAppChange = { enabled ->
-                            scope.launch { repository.setBlockYouTubeApp(enabled) }
                         },
                         onBlockYouTubeShortsWebsiteChange = { enabled ->
                             scope.launch { repository.setBlockYouTubeShortsWebsite(enabled) }
@@ -340,9 +353,6 @@ fun WeLiveApp() {
                         onBlockHomeFeedChange = { enabled ->
                             scope.launch { repository.setBlockInstagramHomeFeed(enabled) }
                         },
-                        onPreloadHomeFeedBlockOnInstagramOpenChange = { enabled ->
-                            scope.launch { repository.setPreloadHomeFeedBlockOnInstagramOpen(enabled) }
-                        },
                         onBlockHomeStoriesChange = { enabled ->
                             scope.launch { repository.setBlockInstagramHomeStories(enabled) }
                         },
@@ -358,18 +368,10 @@ fun WeLiveApp() {
                         onReverseFromReelChange = { enabled ->
                             scope.launch { repository.setReverseFromReel(enabled) }
                         },
-                        onPulseBlockScreenOnReverseChange = { enabled ->
-                            scope.launch { repository.setPulseBlockScreenOnReverse(enabled) }
+                        onBlockTikTokShortFormChange = { enabled ->
+                            scope.launch { repository.setBlockTikTokShortForm(enabled) }
                         },
-                        openLimitResetCountdown = openLimitResetCountdown,
-                        showInstagramSettings = showInstagramSettings,
-                        onInstagramSettingsClick = {
-                            showInstagramSettings = !showInstagramSettings
-                        },
-                        showYouTubeSettings = showYouTubeSettings,
-                        onYouTubeSettingsClick = {
-                            showYouTubeSettings = !showYouTubeSettings
-                        }
+                        openLimitResetCountdown = openLimitResetCountdown
                     )
                 }
             } else if (selectedTab == AppDashboardTab.Security) {
@@ -532,33 +534,6 @@ fun WeLiveApp() {
                     )
                 }
 
-                item {
-                    HomeDebugRecorderPanel(
-                        state = homeDebugState,
-                        onStart = {
-                            HomeDebugRecorder.start(context.applicationContext)
-                        },
-                        onStop = {
-                            scope.launch {
-                                HomeDebugRecorder.stop(context.applicationContext)
-                            }
-                        }
-                    )
-                }
-
-                item {
-                    DiagnosticsHeader(count = diagnostics.size)
-                }
-
-                if (diagnostics.isEmpty()) {
-                    item {
-                        EmptyDiagnostics()
-                    }
-                } else {
-                    items(diagnostics) { result ->
-                        DetectionRow(result = result)
-                    }
-                }
             }
         }
     }
@@ -568,7 +543,7 @@ private enum class AppDashboardTab(val title: String, val subtitle: String) {
     Home("Home", "Your progress"),
     ProtectedApps("Apps", "Protection rules"),
     Security("Security", "Lock and permissions"),
-    Data("Data", "Training, recorder, diagnostics")
+    Data("Data", "Training tools")
 }
 
 @Composable
@@ -1228,10 +1203,10 @@ private fun AppSecurityPanel(
         )
         Spacer(modifier = Modifier.height(14.dp))
 
-        StepperRow(
+        LockDurationRow(
             label = "Lock Duration",
             detail = "How long Unreel stays inaccessible after you lock it",
-            value = settings.appLockDurationHours,
+            hours = settings.appLockDurationHours,
             accent = SignalCyan,
             onValueChange = onLockDurationHoursChange
         )
@@ -1261,6 +1236,13 @@ private fun AppSecurityPanel(
         )
 
         Spacer(modifier = Modifier.height(14.dp))
+        Text(
+            text = "LOCK PROTECTIONS",
+            color = Steel,
+            style = MaterialTheme.typography.labelSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Spacer(modifier = Modifier.height(4.dp))
         ToggleRow(
             label = "Block Uninstall",
             detail = when {
@@ -1273,7 +1255,8 @@ private fun AppSecurityPanel(
             },
             checked = settings.protectAppUninstall,
             accent = SignalRed,
-            onCheckedChange = onProtectAppUninstallChange
+            onCheckedChange = onProtectAppUninstallChange,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
 
         Spacer(modifier = Modifier.height(8.dp))
@@ -1321,7 +1304,8 @@ private fun AppSecurityPanel(
             },
             checked = settings.hideLauncherIcon,
             accent = SignalCyan,
-            onCheckedChange = onHideLauncherIconChange
+            onCheckedChange = onHideLauncherIconChange,
+            modifier = Modifier.padding(horizontal = 8.dp)
         )
 
         if (settings.hideLauncherIcon) {
@@ -1406,7 +1390,11 @@ private fun AppSecurityPanel(
 }
 
 @Composable
-private fun Header(settings: AppSettings) {
+private fun Header(
+    settings: AppSettings,
+    dataSelected: Boolean,
+    onDataClick: () -> Unit
+) {
     val protectionActive = settings.blockInstagramReels ||
         settings.blockYouTubeApp ||
         settings.blockYouTubeShortsWebsite
@@ -1423,16 +1411,15 @@ private fun Header(settings: AppSettings) {
         ) {
             Box(
                 modifier = Modifier
-                    .size(38.dp)
-                    .clip(RoundedCornerShape(8.dp))
+                    .size(42.dp)
+                    .clip(RoundedCornerShape(10.dp))
                     .background(Paper),
                 contentAlignment = Alignment.Center
             ) {
-                Text(
-                    text = "U",
-                    color = Ink,
-                    style = MaterialTheme.typography.titleMedium,
-                    fontWeight = FontWeight.Bold
+                Image(
+                    painter = painterResource(R.drawable.unreel_launcher_mark),
+                    contentDescription = "Unreel",
+                    modifier = Modifier.size(40.dp)
                 )
             }
             Column {
@@ -1449,27 +1436,30 @@ private fun Header(settings: AppSettings) {
                 )
             }
         }
-        Row(
-            modifier = Modifier
-                .background(Ink, RoundedCornerShape(8.dp))
-                .border(1.dp, Graphite, RoundedCornerShape(8.dp))
-                .padding(horizontal = 10.dp, vertical = 7.dp),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(7.dp)
-        ) {
-            Box(
+        Column(horizontalAlignment = Alignment.End) {
+            Row(
                 modifier = Modifier
-                    .size(7.dp)
-                    .background(
-                        if (protectionActive) SignalGreen else Steel,
-                        RoundedCornerShape(4.dp)
-                    )
-            )
+                    .background(Ink, RoundedCornerShape(8.dp))
+                    .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+                    .padding(horizontal = 10.dp, vertical = 7.dp),
+                verticalAlignment = Alignment.CenterVertically,
+                horizontalArrangement = Arrangement.spacedBy(7.dp)
+            ) {
+                Box(
+                    modifier = Modifier
+                        .size(7.dp)
+                        .background(if (protectionActive) SignalGreen else Steel, RoundedCornerShape(4.dp))
+                )
+                Text(if (protectionActive) "LIVE" else "PAUSED", color = Paper, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
+            }
             Text(
-                text = if (protectionActive) "LIVE" else "PAUSED",
-                color = Paper,
+                text = if (dataSelected) "Close data" else "Data",
+                modifier = Modifier
+                    .clickable(onClick = onDataClick)
+                    .padding(top = 7.dp, start = 8.dp, bottom = 4.dp),
+                color = if (dataSelected) SignalGreen else Steel,
                 style = MaterialTheme.typography.labelMedium,
-                fontWeight = FontWeight.Bold
+                fontWeight = FontWeight.SemiBold
             )
         }
     }
@@ -1491,7 +1481,7 @@ private fun DashboardTabSwitcher(
             .padding(4.dp),
         horizontalArrangement = Arrangement.spacedBy(4.dp)
     ) {
-        AppDashboardTab.entries.forEach { tab ->
+        AppDashboardTab.entries.filterNot { it == AppDashboardTab.Data }.forEach { tab ->
             val active = tab == selectedTab
             Column(
                 modifier = Modifier
@@ -1550,6 +1540,180 @@ private fun PermissionPanel(onOpenAccessibility: () -> Unit) {
 }
 
 @Composable
+private fun ProtectedAppsPanel(
+    settings: AppSettings,
+    expandedApp: ProtectedApp?,
+    onExpandedAppChange: (ProtectedApp) -> Unit,
+    onTotalAppBlockChange: (ProtectedApp, Boolean) -> Unit,
+    onTotalWebsiteBlockChange: (ProtectedApp, Boolean) -> Unit,
+    onBlockReelsChange: (Boolean) -> Unit,
+    onBlockYouTubeShortsWebsiteChange: (Boolean) -> Unit,
+    onGrayscaleInstagramAppChange: (Boolean) -> Unit,
+    onLimitInstagramOpensPerDayChange: (Boolean) -> Unit,
+    onInstagramDailyOpenLimitChange: (Int) -> Unit,
+    onLimitInstagramToScheduleChange: (Boolean) -> Unit,
+    onInstagramAccessScheduleChange: (List<DailyScheduleWindow>) -> Unit,
+    onBlockHomeFeedChange: (Boolean) -> Unit,
+    onBlockHomeStoriesChange: (Boolean) -> Unit,
+    onAllowStoriesChange: (Boolean) -> Unit,
+    onBlockSearchGridChange: (Boolean) -> Unit,
+    onAllowFriendReelsChange: (Boolean) -> Unit,
+    onReverseFromReelChange: (Boolean) -> Unit,
+    onBlockTikTokShortFormChange: (Boolean) -> Unit,
+    openLimitResetCountdown: String
+) {
+    val scheduleWindows = settings.instagramAccessSchedule.ifEmpty {
+        InstagramAccessScheduleCodec.defaultWindows()
+    }
+    Column(verticalArrangement = Arrangement.spacedBy(10.dp)) {
+        Text(
+            text = "Protected apps",
+            color = Paper,
+            style = MaterialTheme.typography.headlineSmall,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "Choose targeted protection or close an app and its website completely.",
+            color = Steel,
+            style = MaterialTheme.typography.bodyMedium
+        )
+        Spacer(modifier = Modifier.height(4.dp))
+
+        ProtectedApp.entries.forEach { app ->
+            val expanded = expandedApp == app
+            Panel(borderColor = if (expanded) Paper.copy(alpha = 0.18f) else Graphite) {
+                Row(
+                    modifier = Modifier
+                        .fillMaxWidth()
+                        .clickable { onExpandedAppChange(app) },
+                    horizontalArrangement = Arrangement.SpaceBetween,
+                    verticalAlignment = Alignment.CenterVertically
+                ) {
+                    Row(
+                        modifier = Modifier.weight(1f),
+                        verticalAlignment = Alignment.CenterVertically,
+                        horizontalArrangement = Arrangement.spacedBy(12.dp)
+                    ) {
+                        Box(
+                            modifier = Modifier
+                                .size(40.dp)
+                                .clip(RoundedCornerShape(8.dp))
+                                .background(appAccent(app).copy(alpha = 0.12f)),
+                            contentAlignment = Alignment.Center
+                        ) {
+                            Text(
+                                text = app.displayName.take(1),
+                                color = appAccent(app),
+                                fontWeight = FontWeight.Bold
+                            )
+                        }
+                        Column {
+                            Text(app.displayName, color = Paper, fontWeight = FontWeight.SemiBold)
+                            Text(
+                                text = protectedAppSummary(app, settings),
+                                color = Steel,
+                                style = MaterialTheme.typography.bodySmall,
+                                maxLines = 1,
+                                overflow = TextOverflow.Ellipsis
+                            )
+                        }
+                    }
+                    Text(
+                        text = if (expanded) "Close" else "Manage",
+                        color = appAccent(app),
+                        style = MaterialTheme.typography.labelLarge,
+                        fontWeight = FontWeight.SemiBold
+                    )
+                }
+
+                if (expanded) {
+                    Spacer(modifier = Modifier.height(14.dp))
+                    Box(Modifier.fillMaxWidth().height(1.dp).background(Graphite))
+                    Spacer(modifier = Modifier.height(6.dp))
+                    ToggleRow(
+                        label = "Total app block",
+                        detail = "Immediately returns Home whenever ${app.displayName} opens",
+                        checked = settings.isTotalAppBlocked(app),
+                        accent = SignalRed,
+                        onCheckedChange = { onTotalAppBlockChange(app, it) }
+                    )
+                    ToggleRow(
+                        label = "Total website block",
+                        detail = "Blocks loaded ${app.domains.first()} pages",
+                        checked = settings.isTotalWebsiteBlocked(app),
+                        accent = SignalRed,
+                        onCheckedChange = { onTotalWebsiteBlockChange(app, it) }
+                    )
+
+                    when (app) {
+                        ProtectedApp.INSTAGRAM -> {
+                            ToggleRow("Block Reels", "High-confidence Reels detector", settings.blockInstagramReels, SignalGreen, onBlockReelsChange)
+                            ToggleRow("Block Home Feed", "Stories and navigation remain available", settings.blockInstagramHomeFeed, SignalGreen, onBlockHomeFeedChange)
+                            ToggleRow("Block Home Stories", "Covers stories with the feed", settings.blockInstagramHomeStories, SignalRed, onBlockHomeStoriesChange)
+                            ToggleRow("Block Search Grid", "Blocks the mini-Reels explore grid", settings.blockInstagramSearchGrid, SignalRed, onBlockSearchGridChange)
+                            ToggleRow("Reverse from blocked content", "Returns to the previous Instagram screen", settings.reverseFromReel, SignalCyan, onReverseFromReelChange)
+                            ToggleRow("Allow friend Reels", "Allows Reels shared in messages", settings.allowInstagramReelsFromFriends, SignalGreen, onAllowFriendReelsChange)
+                            ToggleRow("Allow Stories", "Keeps the story viewer available", settings.allowInstagramStories, SignalCyan, onAllowStoriesChange)
+                            ToggleRow("App grayscale", "Makes Instagram monochrome", settings.grayscaleInstagramApp, SignalCyan, onGrayscaleInstagramAppChange)
+                            ToggleRow(
+                                "Daily open limit",
+                                "${settings.instagramOpensToday()}/${settings.instagramDailyOpenLimit} used; resets in $openLimitResetCountdown",
+                                settings.limitInstagramOpensPerDay,
+                                SignalRed,
+                                onLimitInstagramOpensPerDayChange
+                            )
+                            if (settings.limitInstagramOpensPerDay) {
+                                StepperRow("Allowed opens", "Instagram sessions per day", settings.instagramDailyOpenLimit, SignalRed, onInstagramDailyOpenLimitChange)
+                            }
+                            ToggleRow("Scheduled access", formatInstagramScheduleDetail(settings), settings.limitInstagramToSchedule, SignalCyan, onLimitInstagramToScheduleChange)
+                            if (settings.limitInstagramToSchedule) {
+                                InstagramScheduleEditor(scheduleWindows, onInstagramAccessScheduleChange)
+                            }
+                        }
+                        ProtectedApp.YOUTUBE -> {
+                            ToggleRow(
+                                "Block web Shorts",
+                                "Blocks /shorts while regular YouTube remains available",
+                                settings.blockYouTubeShortsWebsite,
+                                SignalCyan,
+                                onBlockYouTubeShortsWebsiteChange
+                            )
+                        }
+                        ProtectedApp.TIKTOK -> {
+                            ToggleRow(
+                                "Messages only",
+                                "Blocks detected vertical video while leaving inbox and chats available",
+                                settings.blockTikTokShortForm,
+                                SignalGreen,
+                                onBlockTikTokShortFormChange
+                            )
+                        }
+                        else -> Unit
+                    }
+                }
+            }
+        }
+    }
+}
+
+private fun appAccent(app: ProtectedApp): Color = when (app) {
+    ProtectedApp.INSTAGRAM, ProtectedApp.THREADS -> SignalGreen
+    ProtectedApp.YOUTUBE, ProtectedApp.REDDIT -> SignalRed
+    ProtectedApp.TIKTOK, ProtectedApp.X -> Paper
+    ProtectedApp.SNAPCHAT, ProtectedApp.LINKEDIN -> SignalCyan
+}
+
+private fun protectedAppSummary(app: ProtectedApp, settings: AppSettings): String = when {
+    settings.isTotalAppBlocked(app) && settings.isTotalWebsiteBlocked(app) -> "App and website closed"
+    settings.isTotalAppBlocked(app) -> "App closed"
+    settings.isTotalWebsiteBlocked(app) -> "Website closed"
+    app == ProtectedApp.INSTAGRAM -> "Reels and feed controls"
+    app == ProtectedApp.YOUTUBE -> "Shorts and app controls"
+    app == ProtectedApp.TIKTOK && settings.blockTikTokShortForm -> "Messages-only protection"
+    else -> "Protection ready"
+}
+
+@Composable
 private fun RulePanel(
     settings: AppSettings,
     onBlockReelsChange: (Boolean) -> Unit,
@@ -1562,13 +1726,11 @@ private fun RulePanel(
     onLimitInstagramToScheduleChange: (Boolean) -> Unit,
     onInstagramAccessScheduleChange: (List<DailyScheduleWindow>) -> Unit,
     onBlockHomeFeedChange: (Boolean) -> Unit,
-    onPreloadHomeFeedBlockOnInstagramOpenChange: (Boolean) -> Unit,
     onBlockHomeStoriesChange: (Boolean) -> Unit,
     onAllowStoriesChange: (Boolean) -> Unit,
     onBlockSearchGridChange: (Boolean) -> Unit,
     onAllowFriendReelsChange: (Boolean) -> Unit,
     onReverseFromReelChange: (Boolean) -> Unit,
-    onPulseBlockScreenOnReverseChange: (Boolean) -> Unit,
     openLimitResetCountdown: String,
     showInstagramSettings: Boolean,
     onInstagramSettingsClick: () -> Unit,
@@ -1675,13 +1837,6 @@ private fun RulePanel(
                 onCheckedChange = onBlockHomeFeedChange
             )
             ToggleRow(
-                label = "Instant Home Block",
-                detail = "Preloads the feed blocker as soon as Instagram opens",
-                checked = settings.preloadHomeFeedBlockOnInstagramOpen,
-                accent = SignalCyan,
-                onCheckedChange = onPreloadHomeFeedBlockOnInstagramOpenChange
-            )
-            ToggleRow(
                 label = "Block Home Stories",
                 detail = "Covers the story strip while the home feed blocker is active",
                 checked = settings.blockInstagramHomeStories,
@@ -1694,13 +1849,6 @@ private fun RulePanel(
                 checked = settings.reverseFromReel,
                 accent = SignalCyan,
                 onCheckedChange = onReverseFromReelChange
-            )
-            ToggleRow(
-                label = "Pulse Block Screen",
-                detail = "Brief cover while reversing",
-                checked = settings.pulseBlockScreenOnReverse,
-                accent = SignalRed,
-                onCheckedChange = onPulseBlockScreenOnReverseChange
             )
             ToggleRow(
                 label = "Allow Friend Reels",
@@ -2208,30 +2356,25 @@ private fun ToggleRow(
     detail: String,
     checked: Boolean,
     accent: Color,
-    onCheckedChange: (Boolean) -> Unit
+    onCheckedChange: (Boolean) -> Unit,
+    modifier: Modifier = Modifier
 ) {
     Row(
-        modifier = Modifier
+        modifier = modifier
             .fillMaxWidth()
             .padding(vertical = 9.dp),
         horizontalArrangement = Arrangement.SpaceBetween,
         verticalAlignment = Alignment.CenterVertically
     ) {
-        Row(
-            modifier = Modifier.weight(1f),
-            verticalAlignment = Alignment.CenterVertically,
-            horizontalArrangement = Arrangement.spacedBy(12.dp)
-        ) {
-            Box(
-                modifier = Modifier
-                    .size(8.dp, 36.dp)
-                    .clip(RoundedCornerShape(6.dp))
-                    .background(accent.copy(alpha = if (checked) 1f else 0.25f))
+        Column(modifier = Modifier.weight(1f).padding(end = 14.dp)) {
+            Text(label, color = Paper, fontWeight = FontWeight.SemiBold)
+            Text(
+                detail,
+                color = Steel,
+                style = MaterialTheme.typography.bodySmall,
+                maxLines = 2,
+                overflow = TextOverflow.Ellipsis
             )
-            Column {
-                Text(label, color = Paper, fontWeight = FontWeight.SemiBold)
-                Text(detail, color = Steel, maxLines = 1, overflow = TextOverflow.Ellipsis)
-            }
         }
         Switch(
             checked = checked,
@@ -2392,6 +2535,49 @@ private fun DetectionRow(result: DetectionResult) {
             )
         }
     }
+}
+
+@Composable
+private fun LockDurationRow(
+    label: String,
+    detail: String,
+    hours: Int,
+    accent: Color,
+    onValueChange: (Int) -> Unit
+) {
+    val presets = listOf(1, 6, 12, 24, 72, 168, 336, 720)
+    val currentIndex = presets.indexOfLast { it <= hours }.coerceAtLeast(0)
+    Row(
+        modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
+        horizontalArrangement = Arrangement.SpaceBetween,
+        verticalAlignment = Alignment.CenterVertically
+    ) {
+        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+            Text(label, color = Paper, fontWeight = FontWeight.SemiBold)
+            Text(detail, color = Steel, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+        }
+        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+            Button(
+                onClick = { onValueChange(presets[(currentIndex - 1).coerceAtLeast(0)]) },
+                colors = ButtonDefaults.buttonColors(containerColor = Graphite, contentColor = Paper),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+            ) { Text("-") }
+            Text(formatLockDuration(hours), color = Paper, fontWeight = FontWeight.Bold)
+            Button(
+                onClick = { onValueChange(presets[(currentIndex + 1).coerceAtMost(presets.lastIndex)]) },
+                colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Ink),
+                shape = RoundedCornerShape(8.dp),
+                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+            ) { Text("+") }
+        }
+    }
+}
+
+private fun formatLockDuration(hours: Int): String = when {
+    hours < 24 -> "${hours}h"
+    hours % 24 == 0 -> "${hours / 24}d"
+    else -> "${hours / 24}d ${hours % 24}h"
 }
 
 @Composable

@@ -19,4 +19,14 @@ class MainActivity : ComponentActivity() {
             }
         }
     }
+
+    override fun onResume() {
+        super.onResume()
+        com.example.welive.accessibility.WeLiveAccessibilityService.dismissAllInterventions()
+    }
+
+    override fun onStop() {
+        com.example.welive.accessibility.WeLiveAccessibilityService.dismissAllInterventions()
+        super.onStop()
+    }
 }

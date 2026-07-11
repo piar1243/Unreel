@@ -27,6 +27,7 @@ import com.example.welive.intervention.ScreenRegion
 import com.example.welive.intervention.YouTubeShortsOverlayController
 import com.example.welive.settings.AppSettings
 import com.example.welive.training.TrainingCaptureState
+import com.example.welive.protection.ProtectedApp
 
 class AccessibilityEventRouter(
     private val snapshotReader: WindowSnapshotReader,
@@ -68,7 +69,15 @@ class AccessibilityEventRouter(
     private var cachedHomeFeedRegion: ScreenRegion? = null
     private var cachedHomeFeedBlockerRegion: ScreenRegion? = null
     private var cachedHomeFeedStoryTapTargets: List<ScreenRegion> = emptyList()
-    private var homeFeedBlockNeedsFreshGeometry = false
+    private var lastTotalAppReturnAt = 0L
+    private var lastTotalWebsiteBackAt = 0L
+    private var lastTotalWebsiteSurface: ContentSurface? = null
+    private var settingsGuardActive = false
+    private var tikTokCoverShowing = false
+
+    fun dismissAllNow() {
+        clearAllBlockers()
+    }
 
     fun suppressHomeFeedOverlayFor(durationMillis: Long) {
         HomeDebugRecorder.recordExternal(
@@ -80,43 +89,11 @@ class AccessibilityEventRouter(
         clearHomeFeedBlock()
     }
 
-    fun showProvisionalHomeFeedBlock(
-        event: AccessibilityEvent,
-        root: AccessibilityNodeInfo?,
-        blockStories: Boolean
-    ) {
-        val now = System.currentTimeMillis()
-        val snapshot = snapshotReader.read(event, root)
-        HomeDebugRecorder.recordExternal(
-            decision = "preload_home_block_on_instagram_open",
-            extras = mapOf(
-                "blockStories" to blockStories,
-                "hasSnapshot" to (snapshot != null),
-                "hasCachedRegion" to (cachedHomeFeedRegion != null)
-            )
-        )
-        clearInstagramWebBlock()
-        clearFullScreenBlockState(immediateOverlayDismiss = true)
-        homeFeedSuppressedUntil = 0L
-        lastHomeFeedSeenAt = now
-        homeFeedBlockNeedsFreshGeometry = true
-        homeFeedAudioController.muteHomeFeed()
-
-        if (snapshot != null) {
-            showHomeFeedBlock(snapshot, blockStories)
-            if (homeFeedOverlayController.isShowing) {
-                homeFeedOverlayController.holdSolid()
-                return
-            }
-        }
-
-        showCachedHomeFeedBlock(blockStories, now)
-    }
-
     fun onEvent(
         event: AccessibilityEvent,
         rootProvider: () -> AccessibilityNodeInfo?,
-        settings: AppSettings
+        settings: AppSettings,
+        useEventNavigationHints: Boolean = true
     ) {
         val packageName = event.packageName?.toString().orEmpty()
         val now = System.currentTimeMillis()
@@ -130,6 +107,9 @@ class AccessibilityEventRouter(
             BrowserPackageConfig.isSupported(rootPackageName)
         val settingsIsActive = SettingsPackageConfig.isSupported(packageName) ||
             SettingsPackageConfig.isSupported(rootPackageName)
+        val protectedApp = ProtectedApp.fromPackage(rootPackageName)
+            ?: ProtectedApp.fromPackage(packageName)
+        val protectedNativeIsActive = protectedApp != null
         recordHomeDebug(
             phase = "event",
             decision = "received",
@@ -152,7 +132,7 @@ class AccessibilityEventRouter(
             return
         }
 
-        if (!instagramIsActive && !youtubeIsActive && !browserIsActive && !settingsIsActive) {
+        if (!instagramIsActive && !youtubeIsActive && !browserIsActive && !settingsIsActive && !protectedNativeIsActive) {
             if (packageName == appPackageName) {
                 if (event.className?.toString()?.contains("MainActivity") == true) {
                     recordHomeDebug("event", "clear_blockers_app_activity", event, rootPackageName)
@@ -180,21 +160,43 @@ class AccessibilityEventRouter(
             return
         }
 
+        if (protectedApp != null && settings.isTotalAppBlocked(protectedApp)) {
+            recordHomeDebug("decision", "total_app_block_${protectedApp.name.lowercase()}", event, rootPackageName)
+            clearAllBlockers()
+            if (now - lastTotalAppReturnAt >= TOTAL_ACCESS_RETURN_COOLDOWN_MS) {
+                lastTotalAppReturnAt = now
+                performHome()
+            }
+            return
+        }
+
         if (!browserIsActive) {
             clearInstagramWebBlock()
             clearYouTubeWebBlock()
         }
 
-        if (instagramIsActive && event.isInstagramNavigationEvent()) {
+        if (useEventNavigationHints && instagramIsActive && event.isInstagramNavigationEvent()) {
             lastInstagramNavigationAt = now
         }
-        val homeFeedEnterNavigationEvent = instagramIsActive && event.isHomeFeedEnterNavigationEvent()
+        val homeFeedEnterNavigationEvent = useEventNavigationHints &&
+            instagramIsActive &&
+            event.isHomeFeedEnterNavigationEvent()
         if (homeFeedEnterNavigationEvent) {
             lastHomeTabNavigationAt = now
             recordHomeDebug("fast_event", "clear_home_suppression_home_tab_event", event, rootPackageName)
             homeFeedSuppressedUntil = 0L
+            if (
+                settings.blockInstagramHomeFeed &&
+                !settings.isTemporarilyAllowed(now) &&
+                cachedHomeFeedRegion != null
+            ) {
+                recordHomeDebug("fast_event", "show_cached_home_block_home_tab_event", event, rootPackageName)
+                showCachedHomeFeedBlock(settings.blockInstagramHomeStories, now)
+                return
+            }
         }
         if (
+            useEventNavigationHints &&
             instagramIsActive &&
             homeFeedOverlayController.isShowing &&
             event.isHomeStoryOpenEvent()
@@ -205,6 +207,7 @@ class AccessibilityEventRouter(
             return
         }
         if (
+            useEventNavigationHints &&
             instagramIsActive &&
             settings.blockInstagramHomeFeed &&
             event.isHomeFeedExitNavigationEvent() &&
@@ -292,6 +295,9 @@ class AccessibilityEventRouter(
                     )
                     clearAllBlockers()
                 }
+                if (protectedNativeIsActive) {
+                    clearAllBlockers()
+                }
                 recordHomeDebug(
                     phase = "detector",
                     decision = "no_detector_match",
@@ -315,6 +321,11 @@ class AccessibilityEventRouter(
         val isUninstallSurface = result.surface == ContentSurface.SETTINGS_UNINSTALL_UNREEL
         val isAccessibilityBlockerSurface = result.surface == ContentSurface.SETTINGS_ACCESSIBILITY_BLOCKER
         val isSettingsGuardSurface = isUninstallSurface || isAccessibilityBlockerSurface
+        val protectedWebsiteApp = result.surface.protectedWebsiteApp()
+        val protectedWebsiteShouldBlock = protectedWebsiteApp != null &&
+            settings.isTotalWebsiteBlocked(protectedWebsiteApp)
+        val tikTokShortFormShouldBlock = result.surface == ContentSurface.TIKTOK_SHORTFORM &&
+            settings.blockTikTokShortForm
         val friendReelAllowed = result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND &&
             settings.allowInstagramReelsFromFriends
         val reelsShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
@@ -342,12 +353,10 @@ class AccessibilityEventRouter(
             webShouldBlock ||
             youtubeAppShouldBlock ||
             youtubeShortsWebShouldBlock ||
-            settingsGuardShouldBlock
-        val homeFeedDetected = homeFeedClassification.state == InstagramHomeFeedState.HOME_FEED ||
-            (
-                homeFeedClassification.state == InstagramHomeFeedState.UNKNOWN &&
-                    result.surface == ContentSurface.INSTAGRAM_HOME_FEED
-                )
+            settingsGuardShouldBlock ||
+            protectedWebsiteShouldBlock ||
+            tikTokShortFormShouldBlock
+        val homeFeedDetected = homeFeedClassification.state == InstagramHomeFeedState.HOME_FEED
         val clearNonHomeInstagramSurface = instagramIsActive && (
             homeFeedClassification.state == InstagramHomeFeedState.FOLLOWING_TAB ||
                 homeFeedClassification.state == InstagramHomeFeedState.OTHER_SURFACE ||
@@ -355,6 +364,7 @@ class AccessibilityEventRouter(
             )
         val homeFeedShouldBlock = instagramIsActive &&
             settings.blockInstagramHomeFeed &&
+            homeFeedDetected &&
             !clearNonHomeInstagramSurface
         recordHomeDebug(
             phase = "classification",
@@ -432,12 +442,58 @@ class AccessibilityEventRouter(
             clearInstagramWebBlock()
             clearYouTubeWebBlock()
             clearHomeFeedBlock()
-            overlayController.pulseBlocked(
-                onCovered = { performBack() },
-                title = blockTitle,
-                body = blockBody
-            )
+            if (!settingsGuardActive) {
+                settingsGuardActive = true
+                overlayController.pulseBlocked(
+                    onCovered = { performBack() },
+                    title = blockTitle,
+                    body = blockBody
+                )
+            }
             return
+        }
+
+        if (settingsIsActive && settingsGuardActive) {
+            settingsGuardActive = false
+            overlayController.dismissImmediately()
+        }
+
+        if (tikTokCoverShowing && !tikTokShortFormShouldBlock) {
+            tikTokCoverShowing = false
+            clearFullScreenBlockState(immediateOverlayDismiss = true)
+        }
+
+        if (tikTokShortFormShouldBlock) {
+            clearHomeFeedBlock()
+            clearInstagramWebBlock()
+            clearYouTubeWebBlock()
+            if (!tikTokCoverShowing) {
+                overlayController.dismissImmediately()
+            }
+            tikTokCoverShowing = true
+            overlayController.showSolidBlock(
+                title = "TikTok Feed Blocked",
+                body = "Messages remain available below.",
+                bottomPassthroughDp = TIKTOK_BOTTOM_NAV_PASSTHROUGH_DP
+            )
+            overlayController.holdSolid()
+            return
+        }
+
+        if (protectedWebsiteShouldBlock) {
+            val surfaceChanged = lastTotalWebsiteSurface != result.surface
+            clearHomeFeedBlock()
+            clearInstagramWebBlock()
+            clearYouTubeWebBlock()
+            clearFullScreenBlockState(immediateOverlayDismiss = true)
+            if (surfaceChanged || now - lastTotalWebsiteBackAt >= TOTAL_ACCESS_RETURN_COOLDOWN_MS) {
+                lastTotalWebsiteSurface = result.surface
+                lastTotalWebsiteBackAt = now
+                performBack()
+            }
+            return
+        } else if (result.surface != lastTotalWebsiteSurface) {
+            lastTotalWebsiteSurface = null
         }
 
         if ((reelsShouldBlock || searchGridShouldBlock) && settings.reverseFromReel) {
@@ -453,9 +509,6 @@ class AccessibilityEventRouter(
             clearHomeFeedBlock()
             val reversed = handleReverseFromBlockedSurface(
                 now = now,
-                pulseBlockScreen = settings.pulseBlockScreenOnReverse,
-                blockTitle = blockTitle,
-                blockBody = blockBody,
                 afterBack = {
                     if (
                         settings.blockInstagramHomeFeed &&
@@ -596,11 +649,7 @@ class AccessibilityEventRouter(
         if (homeFeedShouldBlock) {
             recordHomeDebug(
                 phase = "decision",
-                decision = if (homeFeedDetected) {
-                    "show_home_feed_block"
-                } else {
-                    "show_guarded_default_home_block"
-                },
+                decision = "show_home_feed_block",
                 event = event,
                 rootPackageName = rootPackageName,
                 snapshot = snapshot,
@@ -730,14 +779,15 @@ class AccessibilityEventRouter(
         clearInstagramWebBlock()
         clearYouTubeWebBlock()
         homeFeedSuppressedUntil = 0L
-        clearFullScreenBlockState()
+        settingsGuardActive = false
+        tikTokCoverShowing = false
+        clearFullScreenBlockState(immediateOverlayDismiss = true)
     }
 
     private fun clearHomeFeedBlock() {
         homeFeedOverlayController.dismiss()
         homeFeedAudioController.restore()
         lastHomeFeedSeenAt = 0L
-        homeFeedBlockNeedsFreshGeometry = false
     }
 
     private fun clearInstagramWebBlock() {
@@ -797,11 +847,7 @@ class AccessibilityEventRouter(
         snapshot: WindowSnapshot,
         blockStories: Boolean
     ) {
-        if (
-            homeFeedOverlayController.isShowing &&
-            cachedHomeFeedRegion != null &&
-            !homeFeedBlockNeedsFreshGeometry
-        ) {
+        if (cachedHomeFeedRegion != null) {
             showCachedHomeFeedBlock(blockStories, System.currentTimeMillis())
             return
         }
@@ -818,7 +864,6 @@ class AccessibilityEventRouter(
             cachedHomeFeedRegion = freshRegion
             cachedHomeFeedBlockerRegion = freshBlockerRegion
             cachedHomeFeedStoryTapTargets = freshStoryTapTargets.orEmpty()
-            homeFeedBlockNeedsFreshGeometry = false
         }
 
         val region = freshRegion ?: cachedHomeFeedRegion ?: return
@@ -853,9 +898,6 @@ class AccessibilityEventRouter(
 
     private fun handleReverseFromBlockedSurface(
         now: Long,
-        pulseBlockScreen: Boolean,
-        blockTitle: String,
-        blockBody: String,
         afterBack: () -> Unit = {}
     ): Boolean {
         val userNavigatedAfterBack = lastInstagramNavigationAt > lastBackAt + 250L
@@ -873,23 +915,23 @@ class AccessibilityEventRouter(
 
         reverseCooldownUntil = now + 500L
         reverseArmed = false
-        clearFullScreenBlockState(dismissOverlay = !pulseBlockScreen)
+        clearFullScreenBlockState(immediateOverlayDismiss = true)
         reverseArmed = false
         lastBackAt = now
-        if (pulseBlockScreen) {
-            overlayController.pulseBlocked(
-                onCovered = {
-                    performBack()
-                    afterBack()
-                },
-                title = blockTitle,
-                body = blockBody
-            )
-        } else {
-            performBack()
-            afterBack()
-        }
+        performBack()
+        afterBack()
         return true
+    }
+
+    private fun ContentSurface.protectedWebsiteApp(): ProtectedApp? = when (this) {
+        ContentSurface.PROTECTED_WEBSITE_YOUTUBE -> ProtectedApp.YOUTUBE
+        ContentSurface.PROTECTED_WEBSITE_TIKTOK -> ProtectedApp.TIKTOK
+        ContentSurface.PROTECTED_WEBSITE_SNAPCHAT -> ProtectedApp.SNAPCHAT
+        ContentSurface.PROTECTED_WEBSITE_X -> ProtectedApp.X
+        ContentSurface.PROTECTED_WEBSITE_THREADS -> ProtectedApp.THREADS
+        ContentSurface.PROTECTED_WEBSITE_REDDIT -> ProtectedApp.REDDIT
+        ContentSurface.PROTECTED_WEBSITE_LINKEDIN -> ProtectedApp.LINKEDIN
+        else -> null
     }
 
     private fun updateShortFormExposure(surface: ContentSurface, now: Long) {
@@ -1021,6 +1063,8 @@ class AccessibilityEventRouter(
         const val WEB_OVERLAY_SELF_EVENT_GRACE_MS = 2_500L
         const val YOUTUBE_APP_RETURN_COOLDOWN_MS = 750L
         const val YOUTUBE_SHORTS_BACK_COOLDOWN_MS = 750L
+        const val TOTAL_ACCESS_RETURN_COOLDOWN_MS = 650L
+        const val TIKTOK_BOTTOM_NAV_PASSTHROUGH_DP = 96
         val HOME_FEED_EXIT_NAVIGATION_ID_MARKERS = setOf(
             "action_bar_button_direct",
             "action_bar_inbox",

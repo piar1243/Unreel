@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.welive.analytics.ProtectionEvent
+import com.example.welive.protection.ProtectedApp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
 
@@ -16,9 +17,24 @@ private val Context.weLiveDataStore by preferencesDataStore(name = "welive_user_
 class UserRulesRepository(private val context: Context) {
     private object Keys {
         val BlockInstagramReels = booleanPreferencesKey("block_instagram_reels")
+        val BlockInstagramAppCompletely = booleanPreferencesKey("block_instagram_app_completely")
         val BlockInstagramWebsite = booleanPreferencesKey("block_instagram_website")
         val BlockYouTubeApp = booleanPreferencesKey("block_youtube_app")
+        val BlockYouTubeWebsiteCompletely = booleanPreferencesKey("block_youtube_website_completely")
         val BlockYouTubeShortsWebsite = booleanPreferencesKey("block_youtube_shorts_website")
+        val BlockTikTokAppCompletely = booleanPreferencesKey("block_tiktok_app_completely")
+        val BlockTikTokWebsiteCompletely = booleanPreferencesKey("block_tiktok_website_completely")
+        val BlockTikTokShortForm = booleanPreferencesKey("block_tiktok_short_form")
+        val BlockSnapchatAppCompletely = booleanPreferencesKey("block_snapchat_app_completely")
+        val BlockSnapchatWebsiteCompletely = booleanPreferencesKey("block_snapchat_website_completely")
+        val BlockXAppCompletely = booleanPreferencesKey("block_x_app_completely")
+        val BlockXWebsiteCompletely = booleanPreferencesKey("block_x_website_completely")
+        val BlockThreadsAppCompletely = booleanPreferencesKey("block_threads_app_completely")
+        val BlockThreadsWebsiteCompletely = booleanPreferencesKey("block_threads_website_completely")
+        val BlockRedditAppCompletely = booleanPreferencesKey("block_reddit_app_completely")
+        val BlockRedditWebsiteCompletely = booleanPreferencesKey("block_reddit_website_completely")
+        val BlockLinkedInAppCompletely = booleanPreferencesKey("block_linkedin_app_completely")
+        val BlockLinkedInWebsiteCompletely = booleanPreferencesKey("block_linkedin_website_completely")
         val OnboardingCompleted = booleanPreferencesKey("onboarding_completed")
         val AverageWeeklyShortFormMinutes = intPreferencesKey("average_weekly_short_form_minutes")
         val OnboardingCompletedAtMillis = longPreferencesKey("onboarding_completed_at_millis")
@@ -43,13 +59,11 @@ class UserRulesRepository(private val context: Context) {
         val LimitInstagramToSchedule = booleanPreferencesKey("limit_instagram_to_schedule")
         val InstagramAccessSchedule = stringPreferencesKey("instagram_access_schedule")
         val BlockInstagramHomeFeed = booleanPreferencesKey("block_instagram_home_feed")
-        val PreloadHomeFeedBlockOnInstagramOpen = booleanPreferencesKey("preload_home_feed_block_on_instagram_open")
         val BlockInstagramHomeStories = booleanPreferencesKey("block_instagram_home_stories")
         val AllowInstagramStories = booleanPreferencesKey("allow_instagram_stories")
         val BlockInstagramSearchGrid = booleanPreferencesKey("block_instagram_search_grid")
         val AllowInstagramReelsFromFriends = booleanPreferencesKey("allow_instagram_reels_from_friends")
         val ReverseFromReel = booleanPreferencesKey("reverse_from_reel")
-        val PulseBlockScreenOnReverse = booleanPreferencesKey("pulse_block_screen_on_reverse")
         val TemporaryAllowUntil = longPreferencesKey("temporary_allow_until")
     }
 
@@ -57,9 +71,24 @@ class UserRulesRepository(private val context: Context) {
         val scheduleSpec = preferences[Keys.InstagramAccessSchedule] ?: ""
         AppSettings(
             blockInstagramReels = preferences[Keys.BlockInstagramReels] ?: true,
+            blockInstagramAppCompletely = preferences[Keys.BlockInstagramAppCompletely] ?: false,
             blockInstagramWebsite = preferences[Keys.BlockInstagramWebsite] ?: true,
             blockYouTubeApp = preferences[Keys.BlockYouTubeApp] ?: true,
+            blockYouTubeWebsiteCompletely = preferences[Keys.BlockYouTubeWebsiteCompletely] ?: false,
             blockYouTubeShortsWebsite = preferences[Keys.BlockYouTubeShortsWebsite] ?: true,
+            blockTikTokAppCompletely = preferences[Keys.BlockTikTokAppCompletely] ?: false,
+            blockTikTokWebsiteCompletely = preferences[Keys.BlockTikTokWebsiteCompletely] ?: false,
+            blockTikTokShortForm = preferences[Keys.BlockTikTokShortForm] ?: true,
+            blockSnapchatAppCompletely = preferences[Keys.BlockSnapchatAppCompletely] ?: false,
+            blockSnapchatWebsiteCompletely = preferences[Keys.BlockSnapchatWebsiteCompletely] ?: false,
+            blockXAppCompletely = preferences[Keys.BlockXAppCompletely] ?: false,
+            blockXWebsiteCompletely = preferences[Keys.BlockXWebsiteCompletely] ?: false,
+            blockThreadsAppCompletely = preferences[Keys.BlockThreadsAppCompletely] ?: false,
+            blockThreadsWebsiteCompletely = preferences[Keys.BlockThreadsWebsiteCompletely] ?: false,
+            blockRedditAppCompletely = preferences[Keys.BlockRedditAppCompletely] ?: false,
+            blockRedditWebsiteCompletely = preferences[Keys.BlockRedditWebsiteCompletely] ?: false,
+            blockLinkedInAppCompletely = preferences[Keys.BlockLinkedInAppCompletely] ?: false,
+            blockLinkedInWebsiteCompletely = preferences[Keys.BlockLinkedInWebsiteCompletely] ?: false,
             onboardingCompleted = preferences[Keys.OnboardingCompleted] ?: false,
             averageWeeklyShortFormMinutes = preferences[Keys.AverageWeeklyShortFormMinutes] ?: 0,
             onboardingCompletedAtMillis = preferences[Keys.OnboardingCompletedAtMillis] ?: 0L,
@@ -85,19 +114,59 @@ class UserRulesRepository(private val context: Context) {
             instagramAccessScheduleSpec = scheduleSpec,
             instagramAccessSchedule = InstagramAccessScheduleCodec.decode(scheduleSpec),
             blockInstagramHomeFeed = preferences[Keys.BlockInstagramHomeFeed] ?: false,
-            preloadHomeFeedBlockOnInstagramOpen = preferences[Keys.PreloadHomeFeedBlockOnInstagramOpen] ?: false,
             blockInstagramHomeStories = preferences[Keys.BlockInstagramHomeStories] ?: false,
             allowInstagramStories = preferences[Keys.AllowInstagramStories] ?: true,
             blockInstagramSearchGrid = preferences[Keys.BlockInstagramSearchGrid] ?: false,
             allowInstagramReelsFromFriends = preferences[Keys.AllowInstagramReelsFromFriends] ?: false,
             reverseFromReel = preferences[Keys.ReverseFromReel] ?: true,
-            pulseBlockScreenOnReverse = preferences[Keys.PulseBlockScreenOnReverse] ?: false,
             temporaryAllowUntil = preferences[Keys.TemporaryAllowUntil] ?: 0L
         )
     }
 
     suspend fun setBlockInstagramReels(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.BlockInstagramReels] = enabled }
+    }
+
+    suspend fun setTotalAppBlock(app: ProtectedApp, enabled: Boolean) {
+        context.weLiveDataStore.edit { preferences ->
+            preferences[when (app) {
+                ProtectedApp.INSTAGRAM -> Keys.BlockInstagramAppCompletely
+                ProtectedApp.YOUTUBE -> Keys.BlockYouTubeApp
+                ProtectedApp.TIKTOK -> Keys.BlockTikTokAppCompletely
+                ProtectedApp.SNAPCHAT -> Keys.BlockSnapchatAppCompletely
+                ProtectedApp.X -> Keys.BlockXAppCompletely
+                ProtectedApp.THREADS -> Keys.BlockThreadsAppCompletely
+                ProtectedApp.REDDIT -> Keys.BlockRedditAppCompletely
+                ProtectedApp.LINKEDIN -> Keys.BlockLinkedInAppCompletely
+            }] = enabled
+            if (app == ProtectedApp.TIKTOK && enabled) {
+                preferences[Keys.BlockTikTokShortForm] = false
+            }
+        }
+    }
+
+    suspend fun setTotalWebsiteBlock(app: ProtectedApp, enabled: Boolean) {
+        context.weLiveDataStore.edit { preferences ->
+            preferences[when (app) {
+                ProtectedApp.INSTAGRAM -> Keys.BlockInstagramWebsite
+                ProtectedApp.YOUTUBE -> Keys.BlockYouTubeWebsiteCompletely
+                ProtectedApp.TIKTOK -> Keys.BlockTikTokWebsiteCompletely
+                ProtectedApp.SNAPCHAT -> Keys.BlockSnapchatWebsiteCompletely
+                ProtectedApp.X -> Keys.BlockXWebsiteCompletely
+                ProtectedApp.THREADS -> Keys.BlockThreadsWebsiteCompletely
+                ProtectedApp.REDDIT -> Keys.BlockRedditWebsiteCompletely
+                ProtectedApp.LINKEDIN -> Keys.BlockLinkedInWebsiteCompletely
+            }] = enabled
+        }
+    }
+
+    suspend fun setBlockTikTokShortForm(enabled: Boolean) {
+        context.weLiveDataStore.edit {
+            it[Keys.BlockTikTokShortForm] = enabled
+            if (enabled) {
+                it[Keys.BlockTikTokAppCompletely] = false
+            }
+        }
     }
 
     suspend fun setBlockInstagramWebsite(enabled: Boolean) {
@@ -143,7 +212,7 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setAppLockDurationHours(hours: Int) {
         context.weLiveDataStore.edit {
-            it[Keys.AppLockDurationHours] = hours.coerceIn(1, 168)
+            it[Keys.AppLockDurationHours] = hours.coerceIn(1, 720)
         }
     }
 
@@ -151,7 +220,7 @@ class UserRulesRepository(private val context: Context) {
         val normalizedPin = pin.trim()
         val salt = AppSecurity.generateSalt()
         val hash = AppSecurity.hashPin(normalizedPin, salt)
-        val safeDurationHours = durationHours.coerceIn(1, 168)
+        val safeDurationHours = durationHours.coerceIn(1, 720)
         context.weLiveDataStore.edit {
             it[Keys.AppSecurityEnabled] = true
             it[Keys.AppAccessPinSalt] = salt
@@ -176,7 +245,7 @@ class UserRulesRepository(private val context: Context) {
             val enabled = it[Keys.AppSecurityEnabled] ?: false
             val hasPin = !(it[Keys.AppAccessPinHash].isNullOrBlank() || it[Keys.AppAccessPinSalt].isNullOrBlank())
             if (enabled && hasPin) {
-                val durationHours = (it[Keys.AppLockDurationHours] ?: 24).coerceIn(1, 168)
+                val durationHours = (it[Keys.AppLockDurationHours] ?: 24).coerceIn(1, 720)
                 it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + durationHours * HOUR_IN_MILLIS
             }
         }
@@ -267,10 +336,6 @@ class UserRulesRepository(private val context: Context) {
         context.weLiveDataStore.edit { it[Keys.BlockInstagramHomeFeed] = enabled }
     }
 
-    suspend fun setPreloadHomeFeedBlockOnInstagramOpen(enabled: Boolean) {
-        context.weLiveDataStore.edit { it[Keys.PreloadHomeFeedBlockOnInstagramOpen] = enabled }
-    }
-
     suspend fun setBlockInstagramHomeStories(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.BlockInstagramHomeStories] = enabled }
     }
@@ -289,10 +354,6 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setReverseFromReel(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.ReverseFromReel] = enabled }
-    }
-
-    suspend fun setPulseBlockScreenOnReverse(enabled: Boolean) {
-        context.weLiveDataStore.edit { it[Keys.PulseBlockScreenOnReverse] = enabled }
     }
 
     suspend fun allowTemporarily(durationMillis: Long) {

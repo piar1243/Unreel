@@ -54,6 +54,31 @@ class OverlayController(private val service: AccessibilityService) {
         return true
     }
 
+    fun showSolidBlock(
+        title: String,
+        body: String,
+        bottomPassthroughDp: Int = 0
+    ) {
+        val currentView = overlayView
+        if (currentView != null) {
+            holdSolid()
+            return
+        }
+
+        val view = buildOverlay(
+            onAllowOneMinute = {},
+            onOpenSettings = {},
+            showActions = false,
+            title = title,
+            body = body
+        )
+        overlayView = view
+        isDismissing = false
+        windowManager.addView(view, overlayLayoutParams(bottomPassthroughDp))
+        view.alpha = 1f
+        view.translationY = 0f
+    }
+
     fun pulseBlocked(
         onCovered: () -> Unit,
         title: String = "Reels Blocked",
@@ -207,14 +232,23 @@ class OverlayController(private val service: AccessibilityService) {
     }
 
     private fun overlayLayoutParams(): WindowManager.LayoutParams {
+        return overlayLayoutParams(bottomPassthroughDp = 0)
+    }
+
+    private fun overlayLayoutParams(bottomPassthroughDp: Int): WindowManager.LayoutParams {
+        val height = if (bottomPassthroughDp > 0) {
+            (service.resources.displayMetrics.heightPixels - bottomPassthroughDp.dp()).coerceAtLeast(1)
+        } else {
+            WindowManager.LayoutParams.MATCH_PARENT
+        }
         return WindowManager.LayoutParams(
             WindowManager.LayoutParams.MATCH_PARENT,
-            WindowManager.LayoutParams.MATCH_PARENT,
+            height,
             WindowManager.LayoutParams.TYPE_ACCESSIBILITY_OVERLAY,
             WindowManager.LayoutParams.FLAG_LAYOUT_IN_SCREEN,
             android.graphics.PixelFormat.TRANSLUCENT
         ).apply {
-            gravity = Gravity.CENTER
+            gravity = if (bottomPassthroughDp > 0) Gravity.TOP else Gravity.CENTER
         }
     }
 

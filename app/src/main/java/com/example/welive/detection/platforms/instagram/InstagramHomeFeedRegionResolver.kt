@@ -18,12 +18,33 @@ class InstagramHomeFeedRegionResolver {
     }
 
     private fun resolveLayout(snapshot: WindowSnapshot): HomeFeedLayout? {
-        val visibleNodes = snapshot.nodeFeatures.filter { it.isVisibleToUser }
-        if (visibleNodes.isEmpty()) return null
+        val allVisibleNodes = snapshot.nodeFeatures.filter { it.isVisibleToUser }
+        if (allVisibleNodes.isEmpty()) return null
 
-        val screenWidth = visibleNodes.maxOfOrNull { it.boundsRight } ?: return null
-        val screenHeight = visibleNodes.maxOfOrNull { it.boundsBottom } ?: return null
+        // ViewPager keeps adjacent pages in the accessibility tree and may report
+        // them as visible. Derive the physical page from nodes intersecting x=0 so
+        // an off-screen page cannot double the overlay width or alter its bounds.
+        val screenWidth = allVisibleNodes
+            .asSequence()
+            .filter { node -> node.boundsLeft <= 0 && node.boundsRight > 0 }
+            .map { node -> node.boundsRight }
+            .filter { right -> right in MIN_SCREEN_WIDTH..MAX_REASONABLE_SCREEN_WIDTH }
+            .maxOrNull()
+            ?: return null
+        val screenHeight = allVisibleNodes
+            .asSequence()
+            .filter { node -> node.boundsLeft < screenWidth && node.boundsRight > 0 }
+            .map { node -> node.boundsBottom }
+            .filter { bottom -> bottom in MIN_SCREEN_HEIGHT..MAX_REASONABLE_SCREEN_HEIGHT }
+            .maxOrNull()
+            ?: return null
         if (screenWidth <= 0 || screenHeight <= 0) return null
+        val visibleNodes = allVisibleNodes.filter { node ->
+            node.boundsRight > 0 &&
+                node.boundsLeft < screenWidth &&
+                node.boundsBottom > 0 &&
+                node.boundsTop < screenHeight
+        }
 
         val gutter = maxOf(8, screenHeight / 100)
         val storyNodes = visibleNodes.filter { node ->
@@ -171,5 +192,9 @@ class InstagramHomeFeedRegionResolver {
         // Increase these to trim more off the home blocker from the top or bottom.
         const val TOP_TRIM_PX = 0
         const val BOTTOM_TRIM_PX = -25
+        private const val MIN_SCREEN_WIDTH = 320
+        private const val MIN_SCREEN_HEIGHT = 480
+        private const val MAX_REASONABLE_SCREEN_WIDTH = 1600
+        private const val MAX_REASONABLE_SCREEN_HEIGHT = 3200
     }
 }

@@ -2,12 +2,28 @@ package com.example.welive.settings
 
 import java.time.LocalDate
 import java.time.ZonedDateTime
+import com.example.welive.protection.ProtectedApp
 
 data class AppSettings(
     val blockInstagramReels: Boolean = true,
+    val blockInstagramAppCompletely: Boolean = false,
     val blockInstagramWebsite: Boolean = true,
     val blockYouTubeApp: Boolean = true,
+    val blockYouTubeWebsiteCompletely: Boolean = false,
     val blockYouTubeShortsWebsite: Boolean = true,
+    val blockTikTokAppCompletely: Boolean = false,
+    val blockTikTokWebsiteCompletely: Boolean = false,
+    val blockTikTokShortForm: Boolean = true,
+    val blockSnapchatAppCompletely: Boolean = false,
+    val blockSnapchatWebsiteCompletely: Boolean = false,
+    val blockXAppCompletely: Boolean = false,
+    val blockXWebsiteCompletely: Boolean = false,
+    val blockThreadsAppCompletely: Boolean = false,
+    val blockThreadsWebsiteCompletely: Boolean = false,
+    val blockRedditAppCompletely: Boolean = false,
+    val blockRedditWebsiteCompletely: Boolean = false,
+    val blockLinkedInAppCompletely: Boolean = false,
+    val blockLinkedInWebsiteCompletely: Boolean = false,
     val onboardingCompleted: Boolean = false,
     val averageWeeklyShortFormMinutes: Int = 0,
     val onboardingCompletedAtMillis: Long = 0L,
@@ -33,15 +49,34 @@ data class AppSettings(
     val instagramAccessScheduleSpec: String = "",
     val instagramAccessSchedule: List<DailyScheduleWindow> = emptyList(),
     val blockInstagramHomeFeed: Boolean = false,
-    val preloadHomeFeedBlockOnInstagramOpen: Boolean = false,
     val blockInstagramHomeStories: Boolean = false,
     val allowInstagramStories: Boolean = true,
     val blockInstagramSearchGrid: Boolean = false,
     val allowInstagramReelsFromFriends: Boolean = false,
     val reverseFromReel: Boolean = true,
-    val pulseBlockScreenOnReverse: Boolean = false,
     val temporaryAllowUntil: Long = 0L
 ) {
+    fun isTotalAppBlocked(app: ProtectedApp): Boolean = when (app) {
+        ProtectedApp.INSTAGRAM -> blockInstagramAppCompletely
+        ProtectedApp.YOUTUBE -> blockYouTubeApp
+        ProtectedApp.TIKTOK -> blockTikTokAppCompletely && !blockTikTokShortForm
+        ProtectedApp.SNAPCHAT -> blockSnapchatAppCompletely
+        ProtectedApp.X -> blockXAppCompletely
+        ProtectedApp.THREADS -> blockThreadsAppCompletely
+        ProtectedApp.REDDIT -> blockRedditAppCompletely
+        ProtectedApp.LINKEDIN -> blockLinkedInAppCompletely
+    }
+
+    fun isTotalWebsiteBlocked(app: ProtectedApp): Boolean = when (app) {
+        ProtectedApp.INSTAGRAM -> blockInstagramWebsite
+        ProtectedApp.YOUTUBE -> blockYouTubeWebsiteCompletely
+        ProtectedApp.TIKTOK -> blockTikTokWebsiteCompletely
+        ProtectedApp.SNAPCHAT -> blockSnapchatWebsiteCompletely
+        ProtectedApp.X -> blockXWebsiteCompletely
+        ProtectedApp.THREADS -> blockThreadsWebsiteCompletely
+        ProtectedApp.REDDIT -> blockRedditWebsiteCompletely
+        ProtectedApp.LINKEDIN -> blockLinkedInWebsiteCompletely
+    }
     fun hasAppPinConfigured(): Boolean {
         return appAccessPinHash.isNotBlank() && appAccessPinSalt.isNotBlank()
     }

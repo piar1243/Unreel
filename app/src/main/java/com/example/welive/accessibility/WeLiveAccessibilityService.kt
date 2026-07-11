@@ -22,6 +22,8 @@ import com.example.welive.detection.platforms.settings.SettingsPackageConfig
 import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 import com.example.welive.detection.platforms.instagramweb.InstagramWebDetector
 import com.example.welive.detection.platforms.youtube.YouTubeDetector
+import com.example.welive.detection.platforms.tiktok.TikTokDetector
+import com.example.welive.detection.platforms.protectedweb.ProtectedWebsiteDetector
 import com.example.welive.intervention.HomeFeedAudioController
 import com.example.welive.intervention.HomeFeedOverlayController
 import com.example.welive.intervention.InstagramWebOverlayController
@@ -55,12 +57,13 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private var currentSettings = AppSettings()
     private var nativeInstagramVisibleForGrayscale = false
     private var nativeInstagramSessionActiveForOpenLimit = false
-    private var nativeInstagramSessionActiveForHomePreload = false
     private var lastOpenLimitReturnAt = 0L
     private var lastScheduleReturnAt = 0L
+    private var navigationCheckGeneration = 0L
 
     override fun onServiceConnected() {
         super.onServiceConnected()
+        activeInstance = this
         TrainingCaptureState.initialize(applicationContext)
         settingsRepository = UserRulesRepository(applicationContext)
         overlayController = OverlayController(this)
@@ -90,9 +93,11 @@ class WeLiveAccessibilityService : AccessibilityService() {
             ),
             detectors = listOf(
                 InstagramDetector(),
+                TikTokDetector(),
                 SettingsUninstallDetector(),
                 InstagramWebDetector(),
-                YouTubeDetector()
+                YouTubeDetector(),
+                ProtectedWebsiteDetector()
             ),
             overlayController = overlayController,
             homeFeedAudioController = homeFeedAudioController,
@@ -142,7 +147,6 @@ class WeLiveAccessibilityService : AccessibilityService() {
             systemGrayscaleController.restore()
             return
         }
-        preloadHomeFeedBlockOnInstagramOpen(event, root)
         updateInstagramGrayscale(event, root)
         eventRouter.onEvent(
             event = event,
@@ -155,6 +159,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     override fun onInterrupt() = Unit
 
     override fun onDestroy() {
+        if (activeInstance === this) activeInstance = null
         if (::overlayController.isInitialized) {
             overlayController.dismiss()
         }
@@ -209,43 +214,6 @@ class WeLiveAccessibilityService : AccessibilityService() {
 
         nativeInstagramVisibleForGrayscale = false
         systemGrayscaleController.restore()
-    }
-
-    private fun preloadHomeFeedBlockOnInstagramOpen(
-        event: AccessibilityEvent,
-        root: AccessibilityNodeInfo?
-    ) {
-        val eventPackageName = event.packageName?.toString().orEmpty()
-        val rootPackageName = root?.packageName?.toString().orEmpty()
-        val eventClassName = event.className?.toString().orEmpty()
-        val instagramIsActive = eventPackageName == InstagramPackageConfig.PACKAGE_NAME ||
-            rootPackageName == InstagramPackageConfig.PACKAGE_NAME
-
-        if (instagramIsActive) {
-            if (!nativeInstagramSessionActiveForHomePreload) {
-                nativeInstagramSessionActiveForHomePreload = true
-                val settings = currentSettings
-                if (
-                    settings.blockInstagramHomeFeed &&
-                    settings.preloadHomeFeedBlockOnInstagramOpen &&
-                    !settings.isTemporarilyAllowed()
-                ) {
-                    eventRouter.showProvisionalHomeFeedBlock(
-                        event = event,
-                        root = root,
-                        blockStories = settings.blockInstagramHomeStories
-                    )
-                }
-            }
-            return
-        }
-
-        val isWeLiveOverlayEvent = (eventPackageName == packageName || rootPackageName == packageName) &&
-            !eventClassName.contains("MainActivity")
-        val isSystemEvent = eventPackageName == SYSTEM_UI_PACKAGE || rootPackageName == SYSTEM_UI_PACKAGE
-        if (!isWeLiveOverlayEvent && !isSystemEvent) {
-            nativeInstagramSessionActiveForHomePreload = false
-        }
     }
 
     private fun enforceInstagramOpenLimit(
@@ -343,15 +311,24 @@ class WeLiveAccessibilityService : AccessibilityService() {
             rootPackageName == InstagramPackageConfig.PACKAGE_NAME
         if (!instagramIsActive || !event.isInstagramNavigationEvent()) return
 
+        val generation = ++navigationCheckGeneration
         NAVIGATION_RECHECK_DELAYS_MS.forEach { delayMillis ->
             val eventCopy = AccessibilityEvent.obtain(event)
             mainHandler.postDelayed(
                 {
-                    if (::eventRouter.isInitialized) {
+                    val activeRoot = rootInActiveWindow
+                    val instagramStillActive = activeRoot.packageNameString() ==
+                        InstagramPackageConfig.PACKAGE_NAME
+                    if (
+                        ::eventRouter.isInitialized &&
+                        generation == navigationCheckGeneration &&
+                        instagramStillActive
+                    ) {
                         eventRouter.onEvent(
                             event = eventCopy,
-                            rootProvider = { rootForEvent(eventCopy) },
-                            settings = currentSettings
+                            rootProvider = { activeRoot },
+                            settings = currentSettings,
+                            useEventNavigationHints = false
                         )
                     }
                     eventCopy.recycle()
@@ -447,9 +424,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private fun AccessibilityEvent.isInstagramNavigationEvent(): Boolean {
         return when (eventType) {
             AccessibilityEvent.TYPE_VIEW_CLICKED,
-            AccessibilityEvent.TYPE_VIEW_SELECTED,
-            AccessibilityEvent.TYPE_VIEW_FOCUSED,
-            AccessibilityEvent.TYPE_TOUCH_INTERACTION_START -> true
+            AccessibilityEvent.TYPE_VIEW_SELECTED -> true
             else -> false
         }
     }
@@ -464,12 +439,19 @@ class WeLiveAccessibilityService : AccessibilityService() {
         return dispatchGesture(gesture, null, mainHandler)
     }
 
-    private companion object {
+    companion object {
+        @Volatile
+        private var activeInstance: WeLiveAccessibilityService? = null
+
+        fun dismissAllInterventions() {
+            activeInstance?.eventRouter?.dismissAllNow()
+        }
+
         const val SYSTEM_UI_PACKAGE = "com.android.systemui"
         const val OPEN_LIMIT_RETURN_COOLDOWN_MS = 750L
         const val SCHEDULE_RETURN_COOLDOWN_MS = 750L
         const val HOME_NAVIGATION_SUPPRESSION_MS = 450L
         const val STORY_OPEN_SUPPRESSION_MS = 1_500L
-        val NAVIGATION_RECHECK_DELAYS_MS = longArrayOf(24L, 64L, 120L, 220L, 360L, 600L, 900L)
+        val NAVIGATION_RECHECK_DELAYS_MS = longArrayOf(32L, 96L, 180L, 320L)
     }
 }

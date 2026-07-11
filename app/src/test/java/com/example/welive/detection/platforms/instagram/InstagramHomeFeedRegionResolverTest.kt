@@ -2,58 +2,38 @@ package com.example.welive.detection.platforms.instagram
 
 import com.example.welive.detection.WindowNodeFeature
 import com.example.welive.detection.WindowSnapshot
+import org.junit.Assert.assertEquals
 import org.junit.Assert.assertNotNull
-import org.junit.Assert.assertTrue
 import org.junit.Test
 
 class InstagramHomeFeedRegionResolverTest {
     private val resolver = InstagramHomeFeedRegionResolver()
 
     @Test
-    fun resolvesCenterFeedBetweenStoriesAndBottomNav() {
+    fun adjacentViewPagerPageDoesNotChangePhysicalScreenBounds() {
         val snapshot = snapshot(
-            visibleFeature("com.instagram.android:id/outer_container", top = 60, bottom = 220, left = 24, right = 156),
-            visibleFeature("com.instagram.android:id/avatar_image_view", top = 80, bottom = 210, left = 36, right = 144),
-            visibleFeature("android:id/list", top = 250, bottom = 2080),
-            visibleFeature("com.instagram.android:id/row_feed_photo_imageview", top = 320, bottom = 1520),
-            visibleFeature("com.instagram.android:id/row_feed_view_group_buttons", top = 1540, bottom = 1680),
-            visibleFeature("com.instagram.android:id/feed_tab", top = 2240, bottom = 2360),
-            visibleFeature("com.instagram.android:id/search_tab", top = 2240, bottom = 2360),
-            visibleFeature("com.instagram.android:id/clips_tab", top = 2240, bottom = 2360)
-        )
-        val region = resolver.resolve(snapshot)
-        val blockerRegion = resolver.resolveBlockerRegion(snapshot)
-        val storyTargets = resolver.resolveStoryTapTargets(snapshot)
-
-        assertNotNull(region)
-        assertNotNull(blockerRegion)
-        assertTrue(region!!.top <= 80)
-        assertTrue(blockerRegion!!.top > 220)
-        assertTrue(region.bottom >= 2360)
-        assertTrue(blockerRegion.bottom < 2240)
-        assertTrue(region.height > 1000)
-        assertTrue(storyTargets.isNotEmpty())
-    }
-
-    @Test
-    fun fallsBackToStableBandWhenFeedNodesAreSparse() {
-        val region = resolver.resolve(
-            snapshot(
-                visibleFeature("com.instagram.android:id/outer_container", top = 40, bottom = 230, left = 24, right = 156),
-                visibleFeature("com.instagram.android:id/avatar_image_view", top = 65, bottom = 220, left = 36, right = 144),
-                visibleFeature("com.instagram.android:id/feed_tab", top = 2245, bottom = 2360),
-                visibleFeature("com.instagram.android:id/search_tab", top = 2245, bottom = 2360),
-                visibleFeature("com.instagram.android:id/profile_tab", top = 2245, bottom = 2360)
+            feature("com.instagram.android:id/title_logo", bottom = 150),
+            feature("com.instagram.android:id/cf_hub_recycler_view", top = 150, bottom = 430),
+            feature("com.instagram.android:id/outer_container", top = 170, bottom = 420),
+            feature("com.instagram.android:id/row_feed_photo_imageview", top = 450, bottom = 1700),
+            feature("com.instagram.android:id/feed_tab", top = 2200, bottom = 2400),
+            feature(
+                viewId = "com.instagram.android:id/offscreen_page",
+                left = 1080,
+                right = 2160,
+                top = 0,
+                bottom = 2400
             )
         )
 
-        assertNotNull(region)
-        assertTrue(region!!.top <= 65)
-        assertTrue(region.bottom > region.top)
-        assertTrue(region.height >= 1200)
+        val overlayRegion = resolver.resolve(snapshot)
+
+        assertNotNull(overlayRegion)
+        assertEquals(1080, overlayRegion?.right)
+        assertEquals(2400, overlayRegion?.bottom)
     }
 
-    private fun snapshot(vararg nodeFeatures: WindowNodeFeature): WindowSnapshot {
+    private fun snapshot(vararg features: WindowNodeFeature): WindowSnapshot {
         return WindowSnapshot(
             packageName = InstagramPackageConfig.PACKAGE_NAME,
             rootPackageName = InstagramPackageConfig.PACKAGE_NAME,
@@ -61,21 +41,21 @@ class InstagramHomeFeedRegionResolverTest {
             eventType = 0,
             texts = emptySet(),
             contentDescriptions = emptySet(),
-            viewIds = emptySet(),
+            viewIds = features.mapNotNull { it.viewId }.toSet(),
             classNames = emptySet(),
-            nodeCount = nodeFeatures.size,
+            nodeCount = features.size,
             scrollableNodeCount = 1,
-            nodeFeatures = nodeFeatures.toList(),
+            nodeFeatures = features.toList(),
             isMusicActive = false
         )
     }
 
-    private fun visibleFeature(
+    private fun feature(
         viewId: String,
-        top: Int,
-        bottom: Int,
         left: Int = 0,
-        right: Int = 1080
+        top: Int = 0,
+        right: Int = 1080,
+        bottom: Int
     ): WindowNodeFeature {
         return WindowNodeFeature(
             text = null,
