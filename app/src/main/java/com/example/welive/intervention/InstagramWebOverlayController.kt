@@ -26,7 +26,9 @@ class InstagramWebOverlayController(
 
     fun showOrUpdate(
         snapshot: WindowSnapshot,
-        onOpenSettings: () -> Unit
+        onOpenSettings: () -> Unit,
+        titleText: String = "Instagram Website Blocked",
+        bodyText: String = "Browser controls stay available."
     ) {
         val region = resolveWebsiteContentRegion(snapshot)
         if (region.width <= 0 || region.height < MIN_VISIBLE_BLOCK_HEIGHT_DP.dp()) {
@@ -36,7 +38,7 @@ class InstagramWebOverlayController(
 
         val view = overlayView
         if (view == null) {
-            val newView = buildOverlay(onOpenSettings)
+            val newView = buildOverlay(onOpenSettings, titleText, bodyText)
             overlayView = newView
             isDismissing = false
             windowManager.addView(newView, overlayLayoutParams(region))
@@ -72,7 +74,11 @@ class InstagramWebOverlayController(
             .start()
     }
 
-    private fun buildOverlay(onOpenSettings: () -> Unit): View {
+    private fun buildOverlay(
+        onOpenSettings: () -> Unit,
+        titleText: String,
+        bodyText: String
+    ): View {
         return LinearLayout(service).apply {
             orientation = LinearLayout.VERTICAL
             gravity = Gravity.CENTER
@@ -90,7 +96,7 @@ class InstagramWebOverlayController(
             })
 
             addView(TextView(service).apply {
-                text = "Instagram Website Blocked"
+                text = titleText
                 setTextColor(Color.WHITE)
                 textSize = 26f
                 typeface = Typeface.create(Typeface.SANS_SERIF, Typeface.BOLD)
@@ -101,7 +107,7 @@ class InstagramWebOverlayController(
             ))
 
             addView(TextView(service).apply {
-                text = "Browser controls stay available."
+                text = bodyText
                 setTextColor(Color.rgb(190, 190, 196))
                 textSize = 16f
                 gravity = Gravity.CENTER

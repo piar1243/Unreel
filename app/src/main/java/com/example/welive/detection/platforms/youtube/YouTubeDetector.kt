@@ -177,10 +177,7 @@ class YouTubeDetector : ContentDetector {
     private fun WindowNodeFeature.isActiveBrowserTextInput(): Boolean {
         if (!isFocused) return false
         val normalizedId = viewId.orEmpty().lowercase()
-        val normalizedClass = className.orEmpty().lowercase()
-        return BROWSER_ADDRESS_MARKERS.any(normalizedId::contains) ||
-            isEditable ||
-            normalizedClass.contains("edittext")
+        return BROWSER_ADDRESS_MARKERS.any(normalizedId::contains)
     }
 
     private fun WindowNodeFeature.looksLikeBrowserSuggestionUi(): Boolean {

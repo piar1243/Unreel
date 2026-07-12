@@ -19,6 +19,46 @@ class ProtectedWebsiteDetectorTest {
     }
 
     @Test
+    fun loadedTikTokAddressIsDetected() {
+        val result = detector.detect(browserSnapshot("https://www.tiktok.com/@creator/video/123", focused = false))
+
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_TIKTOK, result.surface)
+        assertEquals(InterventionAction.BLOCK_AND_RETURN, result.recommendedAction)
+    }
+
+    @Test
+    fun loadedLinkedInAddressIsDetected() {
+        val result = detector.detect(browserSnapshot("https://www.linkedin.com/feed/", focused = false))
+
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_LINKEDIN, result.surface)
+        assertEquals(InterventionAction.BLOCK_AND_RETURN, result.recommendedAction)
+    }
+
+    @Test
+    fun pageSearchFieldBeforeLinkedInAddressDoesNotHideLoadedUrl() {
+        val pageSearch = WindowNodeFeature(
+            text = "",
+            contentDescription = null,
+            viewId = "search-input",
+            className = "android.widget.EditText",
+            isClickable = true,
+            isScrollable = false,
+            isVisibleToUser = true,
+            boundsLeft = 140,
+            boundsTop = 270,
+            boundsRight = 940,
+            boundsBottom = 365,
+            isFocused = false,
+            isEditable = true
+        )
+        val loadedAddress = addressNode("linkedin.com/feed/", focused = false)
+        val result = detector.detect(browserSnapshot(listOf(pageSearch, loadedAddress)))
+
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_LINKEDIN, result.surface)
+        assertEquals(InterventionAction.BLOCK_AND_RETURN, result.recommendedAction)
+    }
+
+    @Test
     fun typedAddressIsNeverBlocked() {
         val result = detector.detect(browserSnapshot("reddit.com", focused = true))
 
@@ -34,7 +74,11 @@ class ProtectedWebsiteDetectorTest {
     }
 
     private fun browserSnapshot(url: String, focused: Boolean): WindowSnapshot {
-        val node = WindowNodeFeature(
+        return browserSnapshot(listOf(addressNode(url, focused)))
+    }
+
+    private fun addressNode(url: String, focused: Boolean): WindowNodeFeature {
+        return WindowNodeFeature(
             text = url,
             contentDescription = null,
             viewId = "com.brave.browser:id/url_bar",
@@ -49,18 +93,21 @@ class ProtectedWebsiteDetectorTest {
             isFocused = focused,
             isEditable = true
         )
+    }
+
+    private fun browserSnapshot(nodes: List<WindowNodeFeature>): WindowSnapshot {
         return WindowSnapshot(
             packageName = "com.brave.browser",
             rootPackageName = "com.brave.browser",
             eventPackageName = "com.brave.browser",
             eventType = 0,
-            texts = setOf(url),
+            texts = nodes.mapNotNullTo(mutableSetOf()) { it.text },
             contentDescriptions = emptySet(),
-            viewIds = setOf(node.viewId!!),
-            classNames = setOf(node.className!!),
-            nodeCount = 1,
+            viewIds = nodes.mapNotNullTo(mutableSetOf()) { it.viewId },
+            classNames = nodes.mapNotNullTo(mutableSetOf()) { it.className },
+            nodeCount = nodes.size,
             scrollableNodeCount = 0,
-            nodeFeatures = listOf(node),
+            nodeFeatures = nodes,
             isMusicActive = false
         )
     }

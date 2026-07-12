@@ -2,7 +2,9 @@ package com.example.welive.accessibility
 
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
+import android.util.Log
 import com.example.welive.analytics.ProtectionEvent
+import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.detection.ContentDetector
 import com.example.welive.detection.ContentSurface
 import com.example.welive.detection.DetectionResult
@@ -52,6 +54,7 @@ class AccessibilityEventRouter(
     private val onOpenSettings: () -> Unit,
     private val onProtectionEvent: (ProtectionEvent) -> Unit,
     private val onShortFormExposure: (Long) -> Unit,
+    private val onScreenTimeExposure: (ScreenTimeCategory, Long) -> Unit,
     private val appPackageName: String
 ) {
     private var lastProcessedAt = 0L
@@ -80,11 +83,12 @@ class AccessibilityEventRouter(
     private var friendYouTubeShortsIdentity: String? = null
     private var activeShortFormSurface: ContentSurface? = null
     private var shortFormExposureStartedAt = 0L
+    private var activeScreenTimeCategory: ScreenTimeCategory? = null
+    private var screenTimeStartedAt = 0L
     private var cachedHomeFeedRegion: ScreenRegion? = null
     private var cachedHomeFeedBlockerRegion: ScreenRegion? = null
     private var cachedHomeFeedStoryTapTargets: List<ScreenRegion> = emptyList()
     private var lastTotalAppReturnAt = 0L
-    private var lastTotalWebsiteBackAt = 0L
     private var lastTotalWebsiteSurface: ContentSurface? = null
     private var settingsGuardActive = false
 
@@ -125,6 +129,9 @@ class AccessibilityEventRouter(
         val protectedApp = ProtectedApp.fromPackage(rootPackageName)
             ?: ProtectedApp.fromPackage(packageName)
         val protectedNativeIsActive = protectedApp != null
+        if (protectedApp != null && !settings.isTotalAppBlocked(protectedApp)) {
+            updateScreenTimeExposure(protectedApp.appScreenTimeCategory(), now)
+        }
         val externalEntryEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
             event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
@@ -312,6 +319,25 @@ class AccessibilityEventRouter(
         if (snapshot.rootPackageName == InstagramPackageConfig.PACKAGE_NAME) {
             TrainingCaptureState.recordInstagramSnapshot(snapshot)
         }
+        if (browserIsActive) {
+            val browserSignals = snapshot.nodeFeatures
+                .asSequence()
+                .filter { feature ->
+                    val combined = listOfNotNull(feature.text, feature.contentDescription, feature.viewId)
+                        .joinToString(" ")
+                        .lowercase()
+                    combined.contains("url_bar") ||
+                        combined.contains("location_bar") ||
+                        combined.contains("youtube.com/shorts") ||
+                        combined.contains("tiktok.com") ||
+                        combined.contains("linkedin.com")
+                }
+                .take(12)
+                .joinToString(" | ") { feature ->
+                    "id=${feature.viewId},text=${feature.text},focused=${feature.isFocused}"
+                }
+            Log.d("UnreelWeb", "snapshot pkg=${snapshot.packageName} nodes=${snapshot.nodeCount} signals=$browserSignals")
+        }
         if (snapshot.isSettingsSnapshot()) {
             TrainingCaptureState.recordSettingsSnapshot(snapshot)
         }
@@ -373,7 +399,15 @@ class AccessibilityEventRouter(
         val homeFeedClassification = homeFeedClassifier.classify(snapshot)
 
         DetectionDiagnostics.record(result)
+        if (browserIsActive) {
+            Log.d(
+                "UnreelWeb",
+                "result=${result.surface} platform=${result.platform} action=${result.recommendedAction} " +
+                    "reason=${result.reasons.joinToString()}"
+            )
+        }
         updateShortFormExposure(result.surface, now)
+        updateScreenTimeExposure(result.screenTimeCategory(), now)
 
         val isInstagramReelsSurface = result.surface == ContentSurface.INSTAGRAM_REELS ||
             result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND
@@ -601,16 +635,18 @@ class AccessibilityEventRouter(
         }
 
         if (protectedWebsiteShouldBlock) {
-            val surfaceChanged = lastTotalWebsiteSurface != result.surface
             clearHomeFeedBlock()
-            clearInstagramWebBlock()
             clearYouTubeWebBlock()
             clearFullScreenBlockState(immediateOverlayDismiss = true)
-            if (surfaceChanged || now - lastTotalWebsiteBackAt >= TOTAL_ACCESS_RETURN_COOLDOWN_MS) {
-                lastTotalWebsiteSurface = result.surface
-                lastTotalWebsiteBackAt = now
-                performBack()
-            }
+            lastTotalWebsiteSurface = result.surface
+            lastInstagramWebBlockAt = now
+            instagramWebOverlayController.showOrUpdate(
+                snapshot = snapshot,
+                onOpenSettings = onOpenSettings,
+                titleText = "${protectedWebsiteApp?.displayName ?: "Website"} Website Blocked",
+                bodyText = "This website is blocked by Unreel."
+            )
+            instagramWebOverlayController.holdSolid()
             return
         } else if (result.surface != lastTotalWebsiteSurface) {
             lastTotalWebsiteSurface = null
@@ -944,6 +980,7 @@ class AccessibilityEventRouter(
 
     private fun clearAllBlockers() {
         endShortFormExposure(System.currentTimeMillis())
+        endScreenTimeExposure(System.currentTimeMillis())
         clearHomeFeedBlock()
         clearInstagramWebBlock()
         clearYouTubeWebBlock()
@@ -1155,6 +1192,53 @@ class AccessibilityEventRouter(
         if (trackedSurface != null) {
             activeShortFormSurface = trackedSurface
             shortFormExposureStartedAt = now
+        }
+    }
+
+    private fun updateScreenTimeExposure(category: ScreenTimeCategory?, now: Long) {
+        if (category == activeScreenTimeCategory) return
+        endScreenTimeExposure(now)
+        if (category != null) {
+            activeScreenTimeCategory = category
+            screenTimeStartedAt = now
+        }
+    }
+
+    private fun endScreenTimeExposure(now: Long) {
+        val startedAt = screenTimeStartedAt
+        val category = activeScreenTimeCategory
+        if (category != null && startedAt > 0L && now > startedAt) {
+            onScreenTimeExposure(category, now - startedAt)
+        }
+        activeScreenTimeCategory = null
+        screenTimeStartedAt = 0L
+    }
+
+    private fun ProtectedApp.appScreenTimeCategory(): ScreenTimeCategory = when (this) {
+        ProtectedApp.INSTAGRAM -> ScreenTimeCategory.INSTAGRAM_APP
+        ProtectedApp.YOUTUBE -> ScreenTimeCategory.YOUTUBE_APP
+        ProtectedApp.TIKTOK -> ScreenTimeCategory.TIKTOK_APP
+        ProtectedApp.SNAPCHAT -> ScreenTimeCategory.SNAPCHAT_APP
+        ProtectedApp.X -> ScreenTimeCategory.X_APP
+        ProtectedApp.THREADS -> ScreenTimeCategory.THREADS_APP
+        ProtectedApp.REDDIT -> ScreenTimeCategory.REDDIT_APP
+        ProtectedApp.LINKEDIN -> ScreenTimeCategory.LINKEDIN_APP
+    }
+
+    private fun DetectionResult.screenTimeCategory(): ScreenTimeCategory? = when (surface) {
+        ContentSurface.INSTAGRAM_WEB -> ScreenTimeCategory.INSTAGRAM_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_YOUTUBE -> ScreenTimeCategory.YOUTUBE_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_TIKTOK -> ScreenTimeCategory.TIKTOK_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_SNAPCHAT -> ScreenTimeCategory.SNAPCHAT_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_X -> ScreenTimeCategory.X_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_THREADS -> ScreenTimeCategory.THREADS_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_REDDIT -> ScreenTimeCategory.REDDIT_WEBSITE
+        ContentSurface.PROTECTED_WEBSITE_LINKEDIN -> ScreenTimeCategory.LINKEDIN_WEBSITE
+        else -> when (platform) {
+            Platform.INSTAGRAM -> ScreenTimeCategory.INSTAGRAM_APP
+            Platform.YOUTUBE -> ScreenTimeCategory.YOUTUBE_APP
+            Platform.TIKTOK -> ScreenTimeCategory.TIKTOK_APP
+            else -> null
         }
     }
 

@@ -37,6 +37,25 @@ class YouTubeDetectorTest {
     }
 
     @Test
+    fun focusedPageSearchDoesNotDisableLoadedShortsDetection() {
+        val result = detector.detect(
+            snapshot(
+                packageName = "com.android.chrome",
+                features = listOf(
+                    pageSearchFeature(focused = true),
+                    addressFeature(
+                        text = "https://www.youtube.com/shorts/abc123",
+                        focused = false
+                    )
+                )
+            )
+        )
+
+        assertEquals(ContentSurface.YOUTUBE_SHORTS_WEB, result.surface)
+        assertEquals(InterventionAction.BLOCK, result.recommendedAction)
+    }
+
+    @Test
     fun allowsRegularYouTubeVideoAddress() {
         val result = detector.detect(
             snapshot(
@@ -107,6 +126,24 @@ class YouTubeDetectorTest {
             boundsTop = 0,
             boundsRight = 900,
             boundsBottom = 120,
+            isFocused = focused,
+            isEditable = true
+        )
+    }
+
+    private fun pageSearchFeature(focused: Boolean): WindowNodeFeature {
+        return WindowNodeFeature(
+            text = "",
+            contentDescription = "Search this page",
+            viewId = "page-search-input",
+            className = "android.widget.EditText",
+            isClickable = true,
+            isScrollable = false,
+            isVisibleToUser = true,
+            boundsLeft = 100,
+            boundsTop = 300,
+            boundsRight = 980,
+            boundsBottom = 420,
             isFocused = focused,
             isEditable = true
         )

@@ -19,18 +19,19 @@ class ProtectedWebsiteDetector : ContentDetector {
             return unknown(snapshot, "Browser address entry is active")
         }
 
-        val loadedAddress = snapshot.nodeFeatures.firstNotNullOfOrNull { feature ->
-            feature.combinedText().takeIf {
-                feature.isBrowserAddressInput() && !feature.isFocused
+        val protectedApps = ProtectedApp.entries.filterNot { it == ProtectedApp.INSTAGRAM }
+        val match = snapshot.nodeFeatures
+            .asSequence()
+            .filter { it.isVisibleToUser && it.looksLikeLoadedAddress(snapshot) }
+            .map { it.combinedText() }
+            .mapNotNull { address ->
+                protectedApps.firstOrNull { candidate ->
+                    candidate.domains.any { domain -> address.containsDomain(domain) }
+                }?.let { app -> app to address }
             }
-        } ?: return unknown(snapshot, "No loaded browser address is exposed")
-
-        val app = ProtectedApp.entries
-            .filterNot { it == ProtectedApp.INSTAGRAM }
-            .firstOrNull { candidate ->
-                candidate.domains.any { domain -> loadedAddress.containsDomain(domain) }
-            }
-            ?: return unknown(snapshot, "Loaded address is not a protected website")
+            .firstOrNull()
+            ?: return unknown(snapshot, "No loaded browser address is exposed")
+        val app = match.first
 
         return DetectionResult(
             platform = Platform.PROTECTED_WEB,
@@ -53,8 +54,20 @@ class ProtectedWebsiteDetector : ContentDetector {
 
     private fun WindowNodeFeature.isBrowserAddressInput(): Boolean {
         val id = viewId.orEmpty().lowercase()
-        val clazz = className.orEmpty().lowercase()
-        return ADDRESS_MARKERS.any(id::contains) || (isEditable && clazz.contains("edittext"))
+        return ADDRESS_MARKERS.any(id::contains)
+    }
+
+    private fun WindowNodeFeature.looksLikeLoadedAddress(snapshot: WindowSnapshot): Boolean {
+        if (isFocused) return false
+        if (isBrowserAddressInput()) return true
+
+        val displayHeight = snapshot.nodeFeatures.maxOfOrNull { it.boundsBottom } ?: return false
+        val combined = combinedText()
+        val isTopChrome = boundsTop <= displayHeight * 0.28f && boundsBottom <= displayHeight * 0.38f
+        val hasUrlShape = combined.contains("http://") || combined.contains("https://")
+        return isTopChrome && hasUrlShape && ProtectedApp.entries.any { app ->
+            app != ProtectedApp.INSTAGRAM && app.domains.any { domain -> combined.containsDomain(domain) }
+        }
     }
 
     private fun WindowNodeFeature.isActiveBrowserInput(): Boolean {

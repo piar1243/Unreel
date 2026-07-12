@@ -34,6 +34,7 @@ import com.example.welive.intervention.TikTokOverlayController
 import com.example.welive.intervention.TikTokAudioController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.SystemGrayscaleController
+import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.UserRulesRepository
 import com.example.welive.training.TrainingCaptureState
@@ -137,6 +138,11 @@ class WeLiveAccessibilityService : AccessibilityService() {
             onShortFormExposure = { durationMillis ->
                 serviceScope.launch {
                     settingsRepository.addObservedShortFormTime(durationMillis)
+                }
+            },
+            onScreenTimeExposure = { category, durationMillis ->
+                serviceScope.launch {
+                    settingsRepository.addScreenTime(category, durationMillis)
                 }
             },
             appPackageName = packageName

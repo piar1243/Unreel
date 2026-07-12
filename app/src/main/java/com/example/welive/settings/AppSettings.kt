@@ -2,6 +2,7 @@ package com.example.welive.settings
 
 import java.time.LocalDate
 import java.time.ZonedDateTime
+import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.protection.ProtectedApp
 
 data class AppSettings(
@@ -34,10 +35,11 @@ data class AppSettings(
     val youtubeAppBlockedCount: Int = 0,
     val youtubeShortsBlockedCount: Int = 0,
     val observedShortFormMillis: Long = 0L,
+    val screenTimeMillisByCategory: Map<ScreenTimeCategory, Long> = emptyMap(),
     val appSecurityEnabled: Boolean = false,
     val appAccessPinHash: String = "",
     val appAccessPinSalt: String = "",
-    val appLockDurationHours: Int = 24,
+    val appLockDurationMinutes: Int = 24 * 60,
     val appLockedUntilMillis: Long = 0L,
     val protectAppUninstall: Boolean = true,
     val uninstallBypassUntilMillis: Long = 0L,
@@ -123,6 +125,10 @@ data class AppSettings(
             instagramSearchGridBlockedCount +
             youtubeAppBlockedCount +
             youtubeShortsBlockedCount
+    }
+
+    fun screenTimeMillis(category: ScreenTimeCategory): Long {
+        return screenTimeMillisByCategory[category] ?: 0L
     }
 
     fun estimatedTimeSavedMillis(nowMillis: Long = System.currentTimeMillis()): Long {

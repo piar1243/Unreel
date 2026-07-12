@@ -78,6 +78,7 @@ import com.example.welive.detection.InterventionAction
 import com.example.welive.diagnostics.HomeDebugRecorderState
 import com.example.welive.deviceowner.DeviceOwnerPolicyController
 import com.example.welive.deviceowner.UninstallProtectionStatus
+import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.DailyScheduleWindow
 import com.example.welive.settings.InstagramAccessScheduleCodec
@@ -295,7 +296,7 @@ fun WeLiveApp() {
                 .navigationBarsPadding(),
             contentPadding = androidx.compose.foundation.layout.PaddingValues(
                 start = 20.dp,
-                top = 20.dp,
+                top = 28.dp,
                 end = 20.dp,
                 bottom = 44.dp
             ),
@@ -410,8 +411,8 @@ fun WeLiveApp() {
                             securityPinConfirm = it.take(MAX_PIN_LENGTH).filter(Char::isDigit)
                             securityMessage = null
                         },
-                        onLockDurationHoursChange = { hours ->
-                            scope.launch { repository.setAppLockDurationHours(hours) }
+                        onLockDurationMinutesChange = { minutes ->
+                            scope.launch { repository.setAppLockDurationMinutes(minutes) }
                         },
                         onEnableAndLock = {
                             val validationMessage = validatePinInputs(securityPin, securityPinConfirm)
@@ -421,7 +422,7 @@ fun WeLiveApp() {
                                 scope.launch {
                                     repository.enableAppSecurity(
                                         pin = securityPin,
-                                        durationHours = settings.appLockDurationHours
+                                        durationMinutes = settings.appLockDurationMinutes
                                     )
                                     securityPin = ""
                                     securityPinConfirm = ""
@@ -897,6 +898,7 @@ private fun HomeDashboard(
         }
 
         ProtectionBreakdown(settings)
+        ScreenTimeBreakdown(settings)
     }
 }
 
@@ -983,6 +985,58 @@ private fun ProtectionBreakdown(settings: AppSettings) {
                             .background(accent, RoundedCornerShape(3.dp))
                     )
                 }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ScreenTimeBreakdown(settings: AppSettings) {
+    val rows = ScreenTimeCategory.entries
+    Column(
+        modifier = Modifier
+            .fillMaxWidth()
+            .background(Ink, RoundedCornerShape(8.dp))
+            .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+            .padding(18.dp),
+        verticalArrangement = Arrangement.spacedBy(12.dp)
+    ) {
+        Text(
+            text = "SCREEN TIME",
+            color = Steel,
+            style = MaterialTheme.typography.labelLarge,
+            fontWeight = FontWeight.Bold
+        )
+        Text(
+            text = "Observed while Unreel could identify a supported app or website.",
+            color = Steel,
+            style = MaterialTheme.typography.bodySmall
+        )
+        rows.forEach { category ->
+            Row(
+                modifier = Modifier.fillMaxWidth(),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Row(
+                    verticalAlignment = Alignment.CenterVertically,
+                    horizontalArrangement = Arrangement.spacedBy(10.dp),
+                    modifier = Modifier.weight(1f)
+                ) {
+                    Box(
+                        modifier = Modifier
+                            .size(7.dp)
+                            .clip(RoundedCornerShape(4.dp))
+                            .background(if (category.isWebsite) SignalCyan else SignalGreen)
+                    )
+                    Text(category.displayName, color = Paper, style = MaterialTheme.typography.bodyMedium)
+                }
+                Text(
+                    text = formatDurationCompact(settings.screenTimeMillis(category)),
+                    color = Paper,
+                    style = MaterialTheme.typography.bodyMedium,
+                    fontWeight = FontWeight.SemiBold
+                )
             }
         }
     }
@@ -1195,7 +1249,7 @@ private fun AppSecurityPanel(
     message: String?,
     onPinChange: (String) -> Unit,
     onPinConfirmChange: (String) -> Unit,
-    onLockDurationHoursChange: (Int) -> Unit,
+    onLockDurationMinutesChange: (Int) -> Unit,
     onEnableAndLock: () -> Unit,
     onUpdatePin: () -> Unit,
     onLockNow: () -> Unit,
@@ -1224,9 +1278,9 @@ private fun AppSecurityPanel(
         LockDurationRow(
             label = "Lock Duration",
             detail = "How long Unreel stays inaccessible after you lock it",
-            hours = settings.appLockDurationHours,
+            minutes = settings.appLockDurationMinutes,
             accent = SignalCyan,
-            onValueChange = onLockDurationHoursChange
+            onValueChange = onLockDurationMinutesChange
         )
 
         Spacer(modifier = Modifier.height(6.dp))
@@ -2645,43 +2699,87 @@ private fun DetectionRow(result: DetectionResult) {
 private fun LockDurationRow(
     label: String,
     detail: String,
-    hours: Int,
+    minutes: Int,
     accent: Color,
     onValueChange: (Int) -> Unit
 ) {
-    val presets = listOf(1, 6, 12, 24, 72, 168, 336, 720)
-    val currentIndex = presets.indexOfLast { it <= hours }.coerceAtLeast(0)
-    Row(
+    var selectedUnitName by rememberSaveable { mutableStateOf(LockDurationUnit.HOURS.name) }
+    val selectedUnit = LockDurationUnit.valueOf(selectedUnitName)
+    val safeMinutes = minutes.coerceIn(MIN_LOCK_DURATION_MINUTES, MAX_LOCK_DURATION_MINUTES)
+
+    Column(
         modifier = Modifier.fillMaxWidth().padding(vertical = 9.dp),
-        horizontalArrangement = Arrangement.SpaceBetween,
-        verticalAlignment = Alignment.CenterVertically
+        verticalArrangement = Arrangement.spacedBy(10.dp)
     ) {
-        Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
-            Text(label, color = Paper, fontWeight = FontWeight.SemiBold)
-            Text(detail, color = Steel, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.SpaceBetween,
+            verticalAlignment = Alignment.Top
+        ) {
+            Column(modifier = Modifier.weight(1f).padding(end = 12.dp)) {
+                Text(label, color = Paper, fontWeight = FontWeight.SemiBold)
+                Text(detail, color = Steel, style = MaterialTheme.typography.bodySmall, maxLines = 2)
+            }
+            Text(formatLockDurationMinutes(safeMinutes), color = Paper, fontWeight = FontWeight.Bold)
         }
-        Row(verticalAlignment = Alignment.CenterVertically, horizontalArrangement = Arrangement.spacedBy(8.dp)) {
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp)
+        ) {
+            LockDurationUnit.entries.forEach { unit ->
+                Button(
+                    onClick = { selectedUnitName = unit.name },
+                    modifier = Modifier.weight(1f),
+                    colors = ButtonDefaults.buttonColors(
+                        containerColor = if (unit == selectedUnit) accent else Graphite,
+                        contentColor = if (unit == selectedUnit) Ink else Paper
+                    ),
+                    shape = RoundedCornerShape(8.dp),
+                    contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 6.dp)
+                ) {
+                    Text(unit.label)
+                }
+            }
+        }
+        Row(
+            modifier = Modifier.fillMaxWidth(),
+            horizontalArrangement = Arrangement.spacedBy(8.dp),
+            verticalAlignment = Alignment.CenterVertically
+        ) {
             Button(
-                onClick = { onValueChange(presets[(currentIndex - 1).coerceAtLeast(0)]) },
+                onClick = { onValueChange((safeMinutes - selectedUnit.stepMinutes).coerceAtLeast(MIN_LOCK_DURATION_MINUTES)) },
                 colors = ButtonDefaults.buttonColors(containerColor = Graphite, contentColor = Paper),
                 shape = RoundedCornerShape(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                modifier = Modifier.weight(1f)
             ) { Text("-") }
-            Text(formatLockDuration(hours), color = Paper, fontWeight = FontWeight.Bold)
+            Text(
+                text = "${selectedUnit.label} increments",
+                color = Steel,
+                style = MaterialTheme.typography.labelLarge,
+                modifier = Modifier.weight(2f),
+                textAlign = androidx.compose.ui.text.style.TextAlign.Center
+            )
             Button(
-                onClick = { onValueChange(presets[(currentIndex + 1).coerceAtMost(presets.lastIndex)]) },
+                onClick = { onValueChange((safeMinutes + selectedUnit.stepMinutes).coerceAtMost(MAX_LOCK_DURATION_MINUTES)) },
                 colors = ButtonDefaults.buttonColors(containerColor = accent, contentColor = Ink),
                 shape = RoundedCornerShape(8.dp),
-                contentPadding = androidx.compose.foundation.layout.PaddingValues(horizontal = 12.dp)
+                modifier = Modifier.weight(1f)
             ) { Text("+") }
         }
     }
 }
 
-private fun formatLockDuration(hours: Int): String = when {
-    hours < 24 -> "${hours}h"
-    hours % 24 == 0 -> "${hours / 24}d"
-    else -> "${hours / 24}d ${hours % 24}h"
+private enum class LockDurationUnit(val label: String, val stepMinutes: Int) {
+    MINUTES("Minutes", 1),
+    HOURS("Hours", 60),
+    DAYS("Days", 24 * 60)
+}
+
+private fun formatLockDurationMinutes(minutes: Int): String = when {
+    minutes < 60 -> "${minutes}m"
+    minutes % (24 * 60) == 0 -> "${minutes / (24 * 60)}d"
+    minutes % 60 == 0 -> "${minutes / 60}h"
+    else -> "${minutes / 60}h ${minutes % 60}m"
 }
 
 @Composable
@@ -2861,6 +2959,8 @@ private const val MAX_SCHEDULE_WINDOWS = 4
 private const val MAX_WEEKLY_MINUTES = 70 * 60
 private const val HOME_PROGRESS_BLOCK_TARGET = 100
 private const val DAY_IN_MILLIS = 24L * 60L * 60L * 1000L
+private const val MIN_LOCK_DURATION_MINUTES = 1
+private const val MAX_LOCK_DURATION_MINUTES = 30 * 24 * 60
 private const val MIN_PIN_LENGTH = 4
 private const val MAX_PIN_LENGTH = 8
 private const val APP_UNINSTALL_BYPASS_DURATION_MILLIS = 2L * 60L * 1000L

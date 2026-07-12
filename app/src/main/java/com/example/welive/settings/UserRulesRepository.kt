@@ -8,6 +8,7 @@ import androidx.datastore.preferences.core.longPreferencesKey
 import androidx.datastore.preferences.core.stringPreferencesKey
 import androidx.datastore.preferences.preferencesDataStore
 import com.example.welive.analytics.ProtectionEvent
+import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.protection.ProtectedApp
 import kotlinx.coroutines.flow.Flow
 import kotlinx.coroutines.flow.map
@@ -45,10 +46,12 @@ class UserRulesRepository(private val context: Context) {
         val YouTubeAppBlockedCount = intPreferencesKey("youtube_app_blocked_count")
         val YouTubeShortsBlockedCount = intPreferencesKey("youtube_shorts_blocked_count")
         val ObservedShortFormMillis = longPreferencesKey("observed_short_form_millis")
+        val ScreenTimeMillisByCategory = stringPreferencesKey("screen_time_millis_by_category")
         val AppSecurityEnabled = booleanPreferencesKey("app_security_enabled")
         val AppAccessPinHash = stringPreferencesKey("app_access_pin_hash")
         val AppAccessPinSalt = stringPreferencesKey("app_access_pin_salt")
         val AppLockDurationHours = intPreferencesKey("app_lock_duration_hours")
+        val AppLockDurationMinutes = intPreferencesKey("app_lock_duration_minutes")
         val AppLockedUntilMillis = longPreferencesKey("app_locked_until_millis")
         val ProtectAppUninstall = booleanPreferencesKey("protect_app_uninstall")
         val UninstallBypassUntilMillis = longPreferencesKey("uninstall_bypass_until_millis")
@@ -101,10 +104,14 @@ class UserRulesRepository(private val context: Context) {
             youtubeAppBlockedCount = preferences[Keys.YouTubeAppBlockedCount] ?: 0,
             youtubeShortsBlockedCount = preferences[Keys.YouTubeShortsBlockedCount] ?: 0,
             observedShortFormMillis = preferences[Keys.ObservedShortFormMillis] ?: 0L,
+            screenTimeMillisByCategory = decodeScreenTime(preferences[Keys.ScreenTimeMillisByCategory]),
             appSecurityEnabled = preferences[Keys.AppSecurityEnabled] ?: false,
             appAccessPinHash = preferences[Keys.AppAccessPinHash] ?: "",
             appAccessPinSalt = preferences[Keys.AppAccessPinSalt] ?: "",
-            appLockDurationHours = preferences[Keys.AppLockDurationHours] ?: 24,
+            appLockDurationMinutes = preferences[Keys.AppLockDurationMinutes]
+                ?.coerceIn(1, MAX_LOCK_DURATION_MINUTES)
+                ?: ((preferences[Keys.AppLockDurationHours] ?: 24) * MINUTES_PER_HOUR)
+                    .coerceIn(1, MAX_LOCK_DURATION_MINUTES),
             appLockedUntilMillis = preferences[Keys.AppLockedUntilMillis] ?: 0L,
             protectAppUninstall = preferences[Keys.ProtectAppUninstall] ?: true,
             uninstallBypassUntilMillis = preferences[Keys.UninstallBypassUntilMillis] ?: 0L,
@@ -222,23 +229,33 @@ class UserRulesRepository(private val context: Context) {
         }
     }
 
-    suspend fun setAppLockDurationHours(hours: Int) {
-        context.weLiveDataStore.edit {
-            it[Keys.AppLockDurationHours] = hours.coerceIn(1, 720)
+    suspend fun addScreenTime(category: ScreenTimeCategory, durationMillis: Long) {
+        if (durationMillis <= 0L) return
+        context.weLiveDataStore.edit { preferences ->
+            val current = decodeScreenTime(preferences[Keys.ScreenTimeMillisByCategory]).toMutableMap()
+            current[category] = (current[category] ?: 0L) +
+                durationMillis.coerceAtMost(MAX_EXPOSURE_SESSION_MILLIS)
+            preferences[Keys.ScreenTimeMillisByCategory] = encodeScreenTime(current)
         }
     }
 
-    suspend fun enableAppSecurity(pin: String, durationHours: Int) {
+    suspend fun setAppLockDurationMinutes(minutes: Int) {
+        context.weLiveDataStore.edit {
+            it[Keys.AppLockDurationMinutes] = minutes.coerceIn(1, MAX_LOCK_DURATION_MINUTES)
+        }
+    }
+
+    suspend fun enableAppSecurity(pin: String, durationMinutes: Int) {
         val normalizedPin = pin.trim()
         val salt = AppSecurity.generateSalt()
         val hash = AppSecurity.hashPin(normalizedPin, salt)
-        val safeDurationHours = durationHours.coerceIn(1, 720)
+        val safeDurationMinutes = durationMinutes.coerceIn(1, MAX_LOCK_DURATION_MINUTES)
         context.weLiveDataStore.edit {
             it[Keys.AppSecurityEnabled] = true
             it[Keys.AppAccessPinSalt] = salt
             it[Keys.AppAccessPinHash] = hash
-            it[Keys.AppLockDurationHours] = safeDurationHours
-            it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + safeDurationHours * HOUR_IN_MILLIS
+            it[Keys.AppLockDurationMinutes] = safeDurationMinutes
+            it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + safeDurationMinutes * MINUTE_IN_MILLIS
         }
     }
 
@@ -257,8 +274,11 @@ class UserRulesRepository(private val context: Context) {
             val enabled = it[Keys.AppSecurityEnabled] ?: false
             val hasPin = !(it[Keys.AppAccessPinHash].isNullOrBlank() || it[Keys.AppAccessPinSalt].isNullOrBlank())
             if (enabled && hasPin) {
-                val durationHours = (it[Keys.AppLockDurationHours] ?: 24).coerceIn(1, 720)
-                it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + durationHours * HOUR_IN_MILLIS
+                val durationMinutes = (
+                    it[Keys.AppLockDurationMinutes]
+                        ?: ((it[Keys.AppLockDurationHours] ?: 24) * MINUTES_PER_HOUR)
+                    ).coerceIn(1, MAX_LOCK_DURATION_MINUTES)
+                it[Keys.AppLockedUntilMillis] = System.currentTimeMillis() + durationMinutes * MINUTE_IN_MILLIS
             }
         }
     }
@@ -375,7 +395,30 @@ class UserRulesRepository(private val context: Context) {
     }
 
     private companion object {
-        const val HOUR_IN_MILLIS = 60L * 60L * 1000L
+        const val MINUTES_PER_HOUR = 60
+        const val MAX_LOCK_DURATION_MINUTES = 30 * 24 * MINUTES_PER_HOUR
+        const val MINUTE_IN_MILLIS = 60L * 1000L
         const val MAX_EXPOSURE_SESSION_MILLIS = 10L * 60L * 1000L
+    }
+
+    private fun decodeScreenTime(raw: String?): Map<ScreenTimeCategory, Long> {
+        return raw.orEmpty()
+            .split(';')
+            .mapNotNull { entry ->
+                val parts = entry.split('=', limit = 2)
+                if (parts.size != 2) return@mapNotNull null
+                val category = ScreenTimeCategory.fromStorageKey(parts[0]) ?: return@mapNotNull null
+                val millis = parts[1].toLongOrNull()?.coerceAtLeast(0L) ?: return@mapNotNull null
+                category to millis
+            }
+            .toMap()
+    }
+
+    private fun encodeScreenTime(values: Map<ScreenTimeCategory, Long>): String {
+        return values.entries
+            .sortedBy { it.key.storageKey }
+            .joinToString(";") { (category, millis) ->
+                "${category.storageKey}=${millis.coerceAtLeast(0L)}"
+            }
     }
 }
