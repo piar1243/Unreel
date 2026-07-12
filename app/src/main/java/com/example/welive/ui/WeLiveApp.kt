@@ -335,6 +335,12 @@ fun WeLiveApp() {
                         onBlockYouTubeShortsWebsiteChange = { enabled ->
                             scope.launch { repository.setBlockYouTubeShortsWebsite(enabled) }
                         },
+                        onAllowYouTubeFriendShortsChange = { enabled ->
+                            scope.launch { repository.setAllowYouTubeFriendShorts(enabled) }
+                        },
+                        onBlockYouTubeShortsInAppChange = { enabled ->
+                            scope.launch { repository.setBlockYouTubeShortsInApp(enabled) }
+                        },
                         onGrayscaleInstagramAppChange = { enabled ->
                             scope.launch { repository.setGrayscaleInstagramApp(enabled) }
                         },
@@ -1548,6 +1554,8 @@ private fun ProtectedAppsPanel(
     onTotalWebsiteBlockChange: (ProtectedApp, Boolean) -> Unit,
     onBlockReelsChange: (Boolean) -> Unit,
     onBlockYouTubeShortsWebsiteChange: (Boolean) -> Unit,
+    onAllowYouTubeFriendShortsChange: (Boolean) -> Unit,
+    onBlockYouTubeShortsInAppChange: (Boolean) -> Unit,
     onGrayscaleInstagramAppChange: (Boolean) -> Unit,
     onLimitInstagramOpensPerDayChange: (Boolean) -> Unit,
     onInstagramDailyOpenLimitChange: (Int) -> Unit,
@@ -1677,6 +1685,20 @@ private fun ProtectedAppsPanel(
                                 settings.blockYouTubeShortsWebsite,
                                 SignalCyan,
                                 onBlockYouTubeShortsWebsiteChange
+                            )
+                            ToggleRow(
+                                "Allow friend Shorts",
+                                "Allows the first Shorts page opened from another app or website",
+                                settings.allowYouTubeFriendShorts,
+                                SignalGreen,
+                                onAllowYouTubeFriendShortsChange
+                            )
+                            ToggleRow(
+                                "Block in-app Shorts",
+                                "Keeps the YouTube app available while covering detected Shorts",
+                                settings.blockYouTubeShortsInApp,
+                                SignalRed,
+                                onBlockYouTubeShortsInAppChange
                             )
                         }
                         ProtectedApp.TIKTOK -> {

@@ -12,6 +12,19 @@ import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 class YouTubeDetector : ContentDetector {
     override fun detect(snapshot: WindowSnapshot): DetectionResult {
         if (snapshot.hasYouTubeAppPackage()) {
+            if (snapshot.looksLikeNativeShortsPlayer()) {
+                return DetectionResult(
+                    platform = Platform.YOUTUBE,
+                    surface = ContentSurface.YOUTUBE_SHORTS_APP,
+                    confidence = 0.96f,
+                    packageName = YouTubePackageConfig.PACKAGE_NAME,
+                    reasons = listOf(
+                        "Native YouTube Shorts player markers are visible",
+                        "Vertical video action controls are visible"
+                    ),
+                    recommendedAction = InterventionAction.BLOCK
+                )
+            }
             return DetectionResult(
                 platform = Platform.YOUTUBE,
                 surface = ContentSurface.YOUTUBE_APP,
@@ -22,7 +35,7 @@ class YouTubeDetector : ContentDetector {
             )
         }
 
-        if (!snapshot.hasSupportedBrowserPackage()) {
+        if (!snapshot.hasSupportedBrowserPackage() && !snapshot.hasBrowserChromeSignal()) {
             return unknown(snapshot, "Package is neither YouTube nor a supported browser")
         }
 
@@ -55,16 +68,59 @@ class YouTubeDetector : ContentDetector {
             .any(YouTubePackageConfig::isYouTubeApp)
     }
 
+    private fun WindowSnapshot.looksLikeNativeShortsPlayer(): Boolean {
+        val displayWidth = nodeFeatures.maxOfOrNull { it.boundsRight } ?: return false
+        val displayHeight = nodeFeatures.maxOfOrNull { it.boundsBottom } ?: return false
+        if (displayWidth <= 0 || displayHeight <= 0) return false
+
+        val visibleNodes = nodeFeatures.filter { it.isVisibleToUser }
+        val hasShortsPlayerMarker = visibleNodes.any { feature ->
+            val combined = feature.combinedText()
+            NATIVE_SHORTS_PLAYER_MARKERS.any(combined::contains)
+        }
+        val actionControlCount = visibleNodes.count { feature ->
+            val combined = feature.combinedText()
+            NATIVE_SHORTS_ACTION_MARKERS.any(combined::contains) &&
+                feature.boundsTop > displayHeight * 0.18f
+        }
+        val hasTallMediaSurface = visibleNodes.any { feature ->
+            val width = feature.boundsRight - feature.boundsLeft
+            val height = feature.boundsBottom - feature.boundsTop
+            val className = feature.className.orEmpty().lowercase()
+            width > displayWidth * 0.68f &&
+                height > displayHeight * 0.55f &&
+                (className.contains("surface") ||
+                    className.contains("texture") ||
+                    className.contains("player") ||
+                    className.contains("image") ||
+                    className.contains("webview"))
+        }
+
+        return hasShortsPlayerMarker && actionControlCount >= 2 && hasTallMediaSurface
+    }
+
     private fun WindowSnapshot.hasSupportedBrowserPackage(): Boolean {
         return listOf(packageName, rootPackageName, eventPackageName)
             .any(BrowserPackageConfig::isSupported)
+    }
+
+    private fun WindowSnapshot.hasBrowserChromeSignal(): Boolean {
+        return nodeFeatures.any { feature ->
+            val id = feature.viewId.orEmpty().lowercase()
+            val clazz = feature.className.orEmpty().lowercase()
+            id.contains("custom_tab") ||
+                id.contains("webview") ||
+                clazz.contains("webview") ||
+                id.contains("toolbar")
+        }
     }
 
     private fun WindowNodeFeature.isBrowserAddressInput(): Boolean {
         val normalizedId = viewId.orEmpty().lowercase()
         val normalizedClass = className.orEmpty().lowercase()
         return BROWSER_ADDRESS_MARKERS.any(normalizedId::contains) ||
-            ((isEditable || normalizedClass.contains("edittext")) && isFocused)
+            isEditable ||
+            normalizedClass.contains("edittext")
     }
 
     private fun WindowNodeFeature.isActiveBrowserTextInput(): Boolean {
@@ -116,7 +172,9 @@ class YouTubeDetector : ContentDetector {
             "location_bar",
             "omnibox",
             "search_box",
-            "search_terms"
+            "search_terms",
+            "toolbar",
+            "custom_tab_url"
         )
 
         val BROWSER_SUGGESTION_MARKERS = listOf(
@@ -125,6 +183,23 @@ class YouTubeDetector : ContentDetector {
             "search suggestion",
             "search suggestions",
             "url_suggestion"
+        )
+
+        val NATIVE_SHORTS_PLAYER_MARKERS = listOf(
+            "shorts_player",
+            "shorts_video",
+            "shorts_viewer",
+            "shorts_container",
+            "reels_player"
+        )
+
+        val NATIVE_SHORTS_ACTION_MARKERS = listOf(
+            "like",
+            "dislike",
+            "comment",
+            "share",
+            "remix",
+            "subscribe"
         )
     }
 }

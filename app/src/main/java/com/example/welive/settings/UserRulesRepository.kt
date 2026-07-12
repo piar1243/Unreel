@@ -22,6 +22,8 @@ class UserRulesRepository(private val context: Context) {
         val BlockYouTubeApp = booleanPreferencesKey("block_youtube_app")
         val BlockYouTubeWebsiteCompletely = booleanPreferencesKey("block_youtube_website_completely")
         val BlockYouTubeShortsWebsite = booleanPreferencesKey("block_youtube_shorts_website")
+        val AllowYouTubeFriendShorts = booleanPreferencesKey("allow_youtube_friend_shorts")
+        val BlockYouTubeShortsInApp = booleanPreferencesKey("block_youtube_shorts_in_app")
         val BlockTikTokAppCompletely = booleanPreferencesKey("block_tiktok_app_completely")
         val BlockTikTokWebsiteCompletely = booleanPreferencesKey("block_tiktok_website_completely")
         val BlockTikTokShortForm = booleanPreferencesKey("block_tiktok_short_form")
@@ -68,7 +70,7 @@ class UserRulesRepository(private val context: Context) {
     }
 
     val settings: Flow<AppSettings> = context.weLiveDataStore.data.map { preferences ->
-        val scheduleSpec = preferences[Keys.InstagramAccessSchedule] ?: ""
+        val scheduleSpec = preferences[Keys.InstagramAccessSchedule] ?: "480-1380"
         AppSettings(
             blockInstagramReels = preferences[Keys.BlockInstagramReels] ?: true,
             blockInstagramAppCompletely = preferences[Keys.BlockInstagramAppCompletely] ?: false,
@@ -76,6 +78,8 @@ class UserRulesRepository(private val context: Context) {
             blockYouTubeApp = preferences[Keys.BlockYouTubeApp] ?: true,
             blockYouTubeWebsiteCompletely = preferences[Keys.BlockYouTubeWebsiteCompletely] ?: false,
             blockYouTubeShortsWebsite = preferences[Keys.BlockYouTubeShortsWebsite] ?: true,
+            allowYouTubeFriendShorts = preferences[Keys.AllowYouTubeFriendShorts] ?: false,
+            blockYouTubeShortsInApp = preferences[Keys.BlockYouTubeShortsInApp] ?: false,
             blockTikTokAppCompletely = preferences[Keys.BlockTikTokAppCompletely] ?: false,
             blockTikTokWebsiteCompletely = preferences[Keys.BlockTikTokWebsiteCompletely] ?: false,
             blockTikTokShortForm = preferences[Keys.BlockTikTokShortForm] ?: true,
@@ -179,6 +183,14 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setBlockYouTubeShortsWebsite(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.BlockYouTubeShortsWebsite] = enabled }
+    }
+
+    suspend fun setAllowYouTubeFriendShorts(enabled: Boolean) {
+        context.weLiveDataStore.edit { it[Keys.AllowYouTubeFriendShorts] = enabled }
+    }
+
+    suspend fun setBlockYouTubeShortsInApp(enabled: Boolean) {
+        context.weLiveDataStore.edit { it[Keys.BlockYouTubeShortsInApp] = enabled }
     }
 
     suspend fun completeOnboarding(averageWeeklyMinutes: Int) {

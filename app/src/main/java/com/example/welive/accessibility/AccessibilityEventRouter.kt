@@ -25,6 +25,8 @@ import com.example.welive.intervention.InstagramWebOverlayController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.ScreenRegion
 import com.example.welive.intervention.YouTubeShortsOverlayController
+import com.example.welive.intervention.TikTokOverlayController
+import com.example.welive.intervention.TikTokAudioController
 import com.example.welive.settings.AppSettings
 import com.example.welive.training.TrainingCaptureState
 import com.example.welive.protection.ProtectedApp
@@ -37,6 +39,8 @@ class AccessibilityEventRouter(
     private val homeFeedOverlayController: HomeFeedOverlayController,
     private val instagramWebOverlayController: InstagramWebOverlayController,
     private val youTubeShortsOverlayController: YouTubeShortsOverlayController,
+    private val tikTokOverlayController: TikTokOverlayController,
+    private val tikTokAudioController: TikTokAudioController,
     private val homeFeedClassifier: InstagramHomeFeedClassifier,
     private val homeFeedRegionResolver: InstagramHomeFeedRegionResolver,
     private val performBack: () -> Unit,
@@ -64,6 +68,9 @@ class AccessibilityEventRouter(
     private var lastYouTubeAppReturnAt = 0L
     private var lastYouTubeShortsBackAt = 0L
     private var youTubeShortsBackIssued = false
+    private var lastExternalEntryAt = 0L
+    private var lastBrowserWebsiteAt = 0L
+    private var lastBrowserWebsiteSurface: ContentSurface? = null
     private var activeShortFormSurface: ContentSurface? = null
     private var shortFormExposureStartedAt = 0L
     private var cachedHomeFeedRegion: ScreenRegion? = null
@@ -73,7 +80,6 @@ class AccessibilityEventRouter(
     private var lastTotalWebsiteBackAt = 0L
     private var lastTotalWebsiteSurface: ContentSurface? = null
     private var settingsGuardActive = false
-    private var tikTokCoverShowing = false
 
     fun dismissAllNow() {
         clearAllBlockers()
@@ -110,6 +116,16 @@ class AccessibilityEventRouter(
         val protectedApp = ProtectedApp.fromPackage(rootPackageName)
             ?: ProtectedApp.fromPackage(packageName)
         val protectedNativeIsActive = protectedApp != null
+        val externalEntrySource = !browserIsActive &&
+            !youtubeIsActive &&
+            !settingsIsActive &&
+            packageName != appPackageName &&
+            rootPackageName != appPackageName &&
+            packageName != SYSTEM_UI_PACKAGE &&
+            rootPackageName != SYSTEM_UI_PACKAGE
+        if (externalEntrySource) {
+            lastExternalEntryAt = now
+        }
         recordHomeDebug(
             phase = "event",
             decision = "received",
@@ -122,6 +138,16 @@ class AccessibilityEventRouter(
                 "packageName" to packageName
             )
         )
+
+        if (
+            protectedApp == ProtectedApp.TIKTOK &&
+            tikTokOverlayController.isShowing &&
+            event.isTikTokMessageNavigationEvent()
+        ) {
+            tikTokOverlayController.dismissImmediately()
+            tikTokAudioController.restore()
+            return
+        }
 
         if (settingsIsActive) {
             recordLatestSettingsSnapshot(event, root)
@@ -296,6 +322,11 @@ class AccessibilityEventRouter(
                     clearAllBlockers()
                 }
                 if (protectedNativeIsActive) {
+                    if (protectedApp == ProtectedApp.TIKTOK && tikTokOverlayController.isShowing) {
+                        tikTokOverlayController.showOrHold(snapshot = null)
+                        tikTokAudioController.enforceMute()
+                        return
+                    }
                     clearAllBlockers()
                 }
                 recordHomeDebug(
@@ -317,7 +348,16 @@ class AccessibilityEventRouter(
         val isSearchGridSurface = result.surface == ContentSurface.INSTAGRAM_SEARCH_REELS_GRID
         val isInstagramWebSurface = result.surface == ContentSurface.INSTAGRAM_WEB
         val isYouTubeAppSurface = result.surface == ContentSurface.YOUTUBE_APP
+        val isYouTubeShortsAppSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_APP
         val isYouTubeShortsWebSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_WEB
+        val enteredYouTubeFromExternal =
+            now - lastExternalEntryAt <= YOUTUBE_FRIEND_ENTRY_WINDOW_MS ||
+                (result.surface == ContentSurface.YOUTUBE_SHORTS_WEB &&
+                    lastBrowserWebsiteSurface != null &&
+                    now - lastBrowserWebsiteAt <= YOUTUBE_FRIEND_ENTRY_WINDOW_MS)
+        val allowFriendYouTubeShorts = isYouTubeShortsWebSurface &&
+            settings.allowYouTubeFriendShorts &&
+            enteredYouTubeFromExternal
         val isUninstallSurface = result.surface == ContentSurface.SETTINGS_UNINSTALL_UNREEL
         val isAccessibilityBlockerSurface = result.surface == ContentSurface.SETTINGS_ACCESSIBILITY_BLOCKER
         val isSettingsGuardSurface = isUninstallSurface || isAccessibilityBlockerSurface
@@ -344,7 +384,11 @@ class AccessibilityEventRouter(
             settings.blockYouTubeApp
         val youtubeShortsWebShouldBlock = result.recommendedAction == InterventionAction.BLOCK &&
             isYouTubeShortsWebSurface &&
-            settings.blockYouTubeShortsWebsite
+            settings.blockYouTubeShortsWebsite &&
+            !allowFriendYouTubeShorts
+        val youtubeShortsAppShouldBlock = result.recommendedAction == InterventionAction.BLOCK &&
+            isYouTubeShortsAppSurface &&
+            settings.blockYouTubeShortsInApp
         val settingsGuardShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
             isSettingsGuardSurface &&
             settings.protectAppUninstall
@@ -353,6 +397,7 @@ class AccessibilityEventRouter(
             webShouldBlock ||
             youtubeAppShouldBlock ||
             youtubeShortsWebShouldBlock ||
+            youtubeShortsAppShouldBlock ||
             settingsGuardShouldBlock ||
             protectedWebsiteShouldBlock ||
             tikTokShortFormShouldBlock
@@ -382,6 +427,8 @@ class AccessibilityEventRouter(
                 "searchGridShouldBlock" to searchGridShouldBlock,
                 "webShouldBlock" to webShouldBlock,
                 "settingsGuardShouldBlock" to settingsGuardShouldBlock,
+                "allowFriendYouTubeShorts" to allowFriendYouTubeShorts,
+                "enteredYouTubeFromExternal" to enteredYouTubeFromExternal,
                 "nativeShouldBlock" to nativeShouldBlock,
                 "homeFeedSuppressedUntilDelta" to (homeFeedSuppressedUntil - now),
                 "lastHomeFeedSeenAge" to if (lastHomeFeedSeenAt == 0L) -1L else now - lastHomeFeedSeenAt
@@ -392,6 +439,7 @@ class AccessibilityEventRouter(
             isAccessibilityBlockerSurface -> "Permission Change Blocked"
             isUninstallSurface -> "Uninstall Blocked"
             isYouTubeAppSurface -> "YouTube App Blocked"
+            isYouTubeShortsAppSurface -> "YouTube Shorts Blocked"
             isYouTubeShortsWebSurface -> "YouTube Shorts Blocked"
             isInstagramWebSurface -> "Instagram Website Blocked"
             isSearchGridSurface -> "Search Grid Blocked"
@@ -401,6 +449,7 @@ class AccessibilityEventRouter(
             isAccessibilityBlockerSurface -> "Unreel protected its accessibility permission."
             isUninstallSurface -> "Unreel protected itself from being removed."
             isYouTubeAppSurface -> "Use youtube.com for intentional viewing."
+            isYouTubeShortsAppSurface -> "The YouTube app remains available for everything else."
             isYouTubeShortsWebSurface -> "Long-form YouTube remains available."
             isInstagramWebSurface -> "Instagram web is blocked."
             isSearchGridSurface -> "You chose to keep this search space clear."
@@ -458,8 +507,13 @@ class AccessibilityEventRouter(
             overlayController.dismissImmediately()
         }
 
-        if (tikTokCoverShowing && !tikTokShortFormShouldBlock) {
-            tikTokCoverShowing = false
+        if (tikTokOverlayController.isShowing && !tikTokShortFormShouldBlock) {
+            if (result.platform == Platform.TIKTOK && result.surface == ContentSurface.UNKNOWN) {
+                tikTokOverlayController.showOrHold(snapshot = snapshot)
+                return
+            }
+            tikTokOverlayController.dismissImmediately()
+            tikTokAudioController.restore()
             clearFullScreenBlockState(immediateOverlayDismiss = true)
         }
 
@@ -467,16 +521,8 @@ class AccessibilityEventRouter(
             clearHomeFeedBlock()
             clearInstagramWebBlock()
             clearYouTubeWebBlock()
-            if (!tikTokCoverShowing) {
-                overlayController.dismissImmediately()
-            }
-            tikTokCoverShowing = true
-            overlayController.showSolidBlock(
-                title = "TikTok Feed Blocked",
-                body = "Messages remain available below.",
-                bottomPassthroughDp = TIKTOK_BOTTOM_NAV_PASSTHROUGH_DP
-            )
-            overlayController.holdSolid()
+            tikTokOverlayController.showOrHold(snapshot = snapshot)
+            tikTokAudioController.enforceMute()
             return
         }
 
@@ -534,7 +580,27 @@ class AccessibilityEventRouter(
             reverseArmed = true
             if (isYouTubeShortsWebSurface) {
                 clearYouTubeWebBlock()
+                if (allowFriendYouTubeShorts) {
+                    lastExternalEntryAt = 0L
+                    lastBrowserWebsiteAt = 0L
+                    lastBrowserWebsiteSurface = null
+                    recordHomeDebug(
+                        phase = "decision",
+                        decision = "allow_first_youtube_friend_short",
+                        event = event,
+                        rootPackageName = rootPackageName,
+                        snapshot = snapshot,
+                        detectorResult = result,
+                        homeFeedClassification = homeFeedClassification
+                    )
+                }
+                return
             }
+        }
+
+        if (browserIsActive && result.surface.isBrowserWebsiteSurface()) {
+            lastBrowserWebsiteAt = now
+            lastBrowserWebsiteSurface = result.surface
         }
 
         if (webShouldBlock) {
@@ -580,6 +646,18 @@ class AccessibilityEventRouter(
                     performBack()
                 }
             }
+            return
+        }
+
+        if (youtubeShortsAppShouldBlock) {
+            clearHomeFeedBlock()
+            clearInstagramWebBlock()
+            clearFullScreenBlockState()
+            youTubeShortsOverlayController.showNativeOrUpdate(
+                snapshot = snapshot,
+                onOpenSettings = onOpenSettings
+            )
+            youTubeShortsOverlayController.holdSolid()
             return
         }
 
@@ -780,7 +858,8 @@ class AccessibilityEventRouter(
         clearYouTubeWebBlock()
         homeFeedSuppressedUntil = 0L
         settingsGuardActive = false
-        tikTokCoverShowing = false
+        tikTokOverlayController.dismissImmediately()
+        tikTokAudioController.restore()
         clearFullScreenBlockState(immediateOverlayDismiss = true)
     }
 
@@ -799,6 +878,17 @@ class AccessibilityEventRouter(
         youTubeShortsOverlayController.dismiss()
         lastYouTubeWebBlockAt = 0L
         youTubeShortsBackIssued = false
+    }
+
+    private fun ContentSurface.isBrowserWebsiteSurface(): Boolean {
+        return this == ContentSurface.INSTAGRAM_WEB ||
+            this == ContentSurface.PROTECTED_WEBSITE_YOUTUBE ||
+            this == ContentSurface.PROTECTED_WEBSITE_TIKTOK ||
+            this == ContentSurface.PROTECTED_WEBSITE_SNAPCHAT ||
+            this == ContentSurface.PROTECTED_WEBSITE_X ||
+            this == ContentSurface.PROTECTED_WEBSITE_THREADS ||
+            this == ContentSurface.PROTECTED_WEBSITE_REDDIT ||
+            this == ContentSurface.PROTECTED_WEBSITE_LINKEDIN
     }
 
     private fun recordHomeDebug(
@@ -1014,6 +1104,23 @@ class AccessibilityEventRouter(
         }
     }
 
+    private fun AccessibilityEvent.isTikTokMessageNavigationEvent(): Boolean {
+        if (
+            eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
+            eventType != AccessibilityEvent.TYPE_VIEW_SELECTED
+        ) return false
+
+        val sourceNode = runCatching { source }.getOrNull()
+        val combined = listOfNotNull(
+            sourceNode?.viewIdResourceName,
+            sourceNode?.text?.toString(),
+            sourceNode?.contentDescription?.toString(),
+            text.joinToString(" "),
+            contentDescription?.toString()
+        ).joinToString(" ").lowercase()
+        return TIKTOK_MESSAGE_NAVIGATION_MARKERS.any(combined::contains)
+    }
+
     private fun AccessibilityEvent.isHomeFeedEnterNavigationEvent(): Boolean {
         if (
             eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
@@ -1063,8 +1170,8 @@ class AccessibilityEventRouter(
         const val WEB_OVERLAY_SELF_EVENT_GRACE_MS = 2_500L
         const val YOUTUBE_APP_RETURN_COOLDOWN_MS = 750L
         const val YOUTUBE_SHORTS_BACK_COOLDOWN_MS = 750L
+        const val YOUTUBE_FRIEND_ENTRY_WINDOW_MS = 10_000L
         const val TOTAL_ACCESS_RETURN_COOLDOWN_MS = 650L
-        const val TIKTOK_BOTTOM_NAV_PASSTHROUGH_DP = 96
         val HOME_FEED_EXIT_NAVIGATION_ID_MARKERS = setOf(
             "action_bar_button_direct",
             "action_bar_inbox",
@@ -1103,6 +1210,9 @@ class AccessibilityEventRouter(
             ContentSurface.INSTAGRAM_EXPLORE,
             ContentSurface.INSTAGRAM_PROFILE,
             ContentSurface.INSTAGRAM_DMS
+        )
+        val TIKTOK_MESSAGE_NAVIGATION_MARKERS = setOf(
+            "inbox", "messages_tab", "message_tab", "chat_tab", "dm_tab", "friends_tab", "friends"
         )
     }
 }

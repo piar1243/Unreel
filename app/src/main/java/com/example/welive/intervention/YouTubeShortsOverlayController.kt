@@ -28,7 +28,20 @@ class YouTubeShortsOverlayController(
         snapshot: WindowSnapshot,
         onOpenSettings: () -> Unit
     ) {
-        val region = resolveWebsiteContentRegion(snapshot)
+        showOrUpdateRegion(resolveWebsiteContentRegion(snapshot), onOpenSettings)
+    }
+
+    fun showNativeOrUpdate(
+        snapshot: WindowSnapshot,
+        onOpenSettings: () -> Unit
+    ) {
+        showOrUpdateRegion(resolveNativeContentRegion(snapshot), onOpenSettings)
+    }
+
+    private fun showOrUpdateRegion(
+        region: ScreenRegion,
+        onOpenSettings: () -> Unit
+    ) {
         if (region.width <= 0 || region.height < MIN_VISIBLE_BLOCK_HEIGHT_DP.dp()) {
             dismiss()
             return
@@ -146,6 +159,37 @@ class YouTubeShortsOverlayController(
         )
     }
 
+    private fun resolveNativeContentRegion(snapshot: WindowSnapshot): ScreenRegion {
+        val displayMetrics = service.resources.displayMetrics
+        val screenWidth = displayMetrics.widthPixels
+        val screenHeight = displayMetrics.heightPixels
+        val bottomNavigationTop = snapshot.nodeFeatures
+            .asSequence()
+            .filter { it.isVisibleToUser }
+            .filter { it.boundsTop > screenHeight * 0.72f }
+            .filter { it.boundsBottom <= screenHeight && it.boundsBottom > it.boundsTop }
+            .filter { it.boundsBottom - it.boundsTop <= 180.dp() }
+            .filter { feature ->
+                val combined = listOfNotNull(
+                    feature.viewId,
+                    feature.text,
+                    feature.contentDescription
+                ).joinToString(" ").lowercase()
+                listOf("bottom_nav", "navigation", "home", "shorts", "subscriptions", "library")
+                    .any(combined::contains)
+            }
+            .map { it.boundsTop }
+            .minOrNull()
+            ?: (screenHeight - NATIVE_BOTTOM_CLEARANCE_DP.dp())
+
+        return ScreenRegion(
+            left = 0,
+            top = 0,
+            right = screenWidth,
+            bottom = bottomNavigationTop.coerceIn(MIN_BLOCK_HEIGHT_DP.dp(), screenHeight)
+        )
+    }
+
     private fun visibleKeyboardTop(): Int? {
         val displayHeight = service.resources.displayMetrics.heightPixels
         return service.windows
@@ -214,6 +258,7 @@ class YouTubeShortsOverlayController(
         const val MIN_VISIBLE_BLOCK_HEIGHT_DP = 96
         const val MIN_KEYBOARD_HEIGHT_DP = 120
         const val KEYBOARD_TOP_GAP_DP = 8
+        const val NATIVE_BOTTOM_CLEARANCE_DP = 120
 
         val BROWSER_CHROME_ID_MARKERS = listOf(
             "url_bar",

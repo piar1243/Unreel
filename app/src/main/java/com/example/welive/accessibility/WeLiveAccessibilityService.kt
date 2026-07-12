@@ -7,6 +7,7 @@ import android.graphics.Path
 import android.media.AudioManager
 import android.os.Handler
 import android.os.Looper
+import android.view.KeyEvent
 import android.provider.Settings
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
@@ -28,6 +29,8 @@ import com.example.welive.intervention.HomeFeedAudioController
 import com.example.welive.intervention.HomeFeedOverlayController
 import com.example.welive.intervention.InstagramWebOverlayController
 import com.example.welive.intervention.YouTubeShortsOverlayController
+import com.example.welive.intervention.TikTokOverlayController
+import com.example.welive.intervention.TikTokAudioController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.SystemGrayscaleController
 import com.example.welive.settings.AppSettings
@@ -51,6 +54,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private lateinit var homeFeedOverlayController: HomeFeedOverlayController
     private lateinit var instagramWebOverlayController: InstagramWebOverlayController
     private lateinit var youTubeShortsOverlayController: YouTubeShortsOverlayController
+    private lateinit var tikTokOverlayController: TikTokOverlayController
+    private lateinit var tikTokAudioController: TikTokAudioController
     private lateinit var systemGrayscaleController: SystemGrayscaleController
     private lateinit var deviceOwnerPolicyController: DeviceOwnerPolicyController
     private lateinit var eventRouter: AccessibilityEventRouter
@@ -86,6 +91,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
         )
         instagramWebOverlayController = InstagramWebOverlayController(this)
         youTubeShortsOverlayController = YouTubeShortsOverlayController(this)
+        tikTokOverlayController = TikTokOverlayController(this)
+        tikTokAudioController = TikTokAudioController(this)
         val audioManager = getSystemService(AudioManager::class.java)
         eventRouter = AccessibilityEventRouter(
             snapshotReader = WindowSnapshotReader(
@@ -104,6 +111,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
             homeFeedOverlayController = homeFeedOverlayController,
             instagramWebOverlayController = instagramWebOverlayController,
             youTubeShortsOverlayController = youTubeShortsOverlayController,
+            tikTokOverlayController = tikTokOverlayController,
+            tikTokAudioController = tikTokAudioController,
             homeFeedClassifier = InstagramHomeFeedClassifier(),
             homeFeedRegionResolver = InstagramHomeFeedRegionResolver(),
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
@@ -158,6 +167,23 @@ class WeLiveAccessibilityService : AccessibilityService() {
 
     override fun onInterrupt() = Unit
 
+    override fun onKeyEvent(event: KeyEvent): Boolean {
+        if (
+            ::tikTokOverlayController.isInitialized &&
+            tikTokOverlayController.isShowing &&
+            (event.keyCode == KeyEvent.KEYCODE_VOLUME_UP ||
+                event.keyCode == KeyEvent.KEYCODE_VOLUME_DOWN)
+        ) {
+            tikTokAudioController.enforceMute()
+            mainHandler.postDelayed({
+                if (tikTokOverlayController.isShowing) {
+                    tikTokAudioController.enforceMute()
+                }
+            }, 120L)
+        }
+        return false
+    }
+
     override fun onDestroy() {
         if (activeInstance === this) activeInstance = null
         if (::overlayController.isInitialized) {
@@ -171,6 +197,12 @@ class WeLiveAccessibilityService : AccessibilityService() {
         }
         if (::youTubeShortsOverlayController.isInitialized) {
             youTubeShortsOverlayController.dismiss()
+        }
+        if (::tikTokOverlayController.isInitialized) {
+            tikTokOverlayController.dismissImmediately()
+        }
+        if (::tikTokAudioController.isInitialized) {
+            tikTokAudioController.restore()
         }
         if (::homeFeedAudioController.isInitialized) {
             homeFeedAudioController.restore()
