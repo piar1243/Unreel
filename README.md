@@ -179,6 +179,27 @@ These tools are intended for development and false-positive investigation. They 
 
 ## Setup
 
+### Mobile installation
+
+Use this path when you already have the APK and only want to install Unreel on an Android phone. No Android Studio or source code is required.
+
+1. Locate the existing APK at `app\build\outputs\apk\debug\app-debug.apk` on the computer that built it.
+2. Transfer the APK to the phone with USB, cloud storage, or another trusted file-transfer method.
+3. Open the APK on the phone and allow the file manager or browser to install unknown apps if Android asks.
+4. Install and open **Unreel**.
+5. Complete onboarding, then enable **Android Settings > Accessibility > Installed apps > Unreel**.
+6. Return to Unreel and configure the protected apps and rules you want to use.
+
+This repository currently produces a debug APK. It is suitable for personal testing, but it is not a signed public release. Installing an updated APK normally preserves existing settings. To start from clean defaults, uninstall the previous build or clear Unreel's app data first.
+
+### Development setup
+
+Use this path when changing Kotlin, Compose, detectors, overlays, or settings. The `Unreel` directory is the canonical project folder:
+
+```text
+C:\Users\frank\AndroidStudioProjects\Unreel
+```
+
 ### Requirements
 
 - Android Studio with the Android SDK installed.
@@ -189,13 +210,7 @@ These tools are intended for development and false-positive investigation. They 
 
 ### Open the project
 
-Use the `Unreel` folder as the canonical project source:
-
-```text
-C:\Users\frank\AndroidStudioProjects\Unreel
-```
-
-Open that folder in Android Studio. If editing in VS Code, make sure Android Studio is also opened against the same folder.
+Open the project folder in Android Studio and let Gradle sync finish. If editing in VS Code, make sure Android Studio is also opened against the same `Unreel` folder. Avoid opening the legacy `WeLive` folder when you intend to run the current GitHub project.
 
 ### Build and test
 
