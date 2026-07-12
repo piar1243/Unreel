@@ -25,6 +25,7 @@ import com.example.welive.intervention.InstagramWebOverlayController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.ScreenRegion
 import com.example.welive.intervention.YouTubeShortsOverlayController
+import com.example.welive.intervention.YouTubeFriendShortsGuardController
 import com.example.welive.intervention.TikTokOverlayController
 import com.example.welive.intervention.TikTokAudioController
 import com.example.welive.settings.AppSettings
@@ -39,11 +40,13 @@ class AccessibilityEventRouter(
     private val homeFeedOverlayController: HomeFeedOverlayController,
     private val instagramWebOverlayController: InstagramWebOverlayController,
     private val youTubeShortsOverlayController: YouTubeShortsOverlayController,
+    private val youTubeFriendShortsGuardController: YouTubeFriendShortsGuardController,
     private val tikTokOverlayController: TikTokOverlayController,
     private val tikTokAudioController: TikTokAudioController,
     private val homeFeedClassifier: InstagramHomeFeedClassifier,
     private val homeFeedRegionResolver: InstagramHomeFeedRegionResolver,
     private val performBack: () -> Unit,
+    private val performBackAfterDelay: (Long) -> Unit,
     private val performHome: () -> Unit,
     private val onAllowOneMinute: () -> Unit,
     private val onOpenSettings: () -> Unit,
@@ -67,10 +70,14 @@ class AccessibilityEventRouter(
     private var lastYouTubeWebBlockAt = 0L
     private var lastYouTubeAppReturnAt = 0L
     private var lastYouTubeShortsBackAt = 0L
+    private var lastYouTubeShortsAppBackAt = 0L
     private var youTubeShortsBackIssued = false
     private var lastExternalEntryAt = 0L
     private var lastBrowserWebsiteAt = 0L
     private var lastBrowserWebsiteSurface: ContentSurface? = null
+    private var friendYouTubeShortsAllowanceActive = false
+    private var friendYouTubeShortsAllowanceStartedAt = 0L
+    private var friendYouTubeShortsIdentity: String? = null
     private var activeShortFormSurface: ContentSurface? = null
     private var shortFormExposureStartedAt = 0L
     private var cachedHomeFeedRegion: ScreenRegion? = null
@@ -109,21 +116,29 @@ class AccessibilityEventRouter(
             rootPackageName == InstagramPackageConfig.PACKAGE_NAME
         val youtubeIsActive = YouTubePackageConfig.isYouTubeApp(packageName) ||
             YouTubePackageConfig.isYouTubeApp(rootPackageName)
+        val instagramBrowserLiteIsActive = instagramIsActive && root.isInstagramBrowserLiteRoot()
         val browserIsActive = BrowserPackageConfig.isSupported(packageName) ||
-            BrowserPackageConfig.isSupported(rootPackageName)
+            BrowserPackageConfig.isSupported(rootPackageName) ||
+            instagramBrowserLiteIsActive
         val settingsIsActive = SettingsPackageConfig.isSupported(packageName) ||
             SettingsPackageConfig.isSupported(rootPackageName)
         val protectedApp = ProtectedApp.fromPackage(rootPackageName)
             ?: ProtectedApp.fromPackage(packageName)
         val protectedNativeIsActive = protectedApp != null
-        val externalEntrySource = !browserIsActive &&
+        val externalEntryEvent = event.eventType == AccessibilityEvent.TYPE_VIEW_CLICKED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOW_STATE_CHANGED ||
+            event.eventType == AccessibilityEvent.TYPE_WINDOWS_CHANGED
+        val dedicatedBrowserActive = BrowserPackageConfig.isDedicatedBrowser(packageName) ||
+            BrowserPackageConfig.isDedicatedBrowser(rootPackageName)
+        val externalEntrySource = externalEntryEvent &&
+            !dedicatedBrowserActive &&
             !youtubeIsActive &&
             !settingsIsActive &&
             packageName != appPackageName &&
             rootPackageName != appPackageName &&
             packageName != SYSTEM_UI_PACKAGE &&
             rootPackageName != SYSTEM_UI_PACKAGE
-        if (externalEntrySource) {
+        if (externalEntrySource && !friendYouTubeShortsAllowanceActive) {
             lastExternalEntryAt = now
         }
         recordHomeDebug(
@@ -196,7 +211,24 @@ class AccessibilityEventRouter(
             return
         }
 
-        if (!browserIsActive) {
+        if (
+            youtubeIsActive &&
+            settings.blockYouTubeShortsInApp &&
+            event.isYouTubeShortsNavigationEvent()
+        ) {
+            clearHomeFeedBlock()
+            clearInstagramWebBlock()
+            clearYouTubeWebBlock()
+            clearFullScreenBlockState(immediateOverlayDismiss = true)
+            if (now - lastYouTubeShortsAppBackAt >= YOUTUBE_SHORTS_APP_BACK_COOLDOWN_MS) {
+                lastYouTubeShortsAppBackAt = now
+                onProtectionEvent(ProtectionEvent.YOUTUBE_SHORT)
+                performBackAfterDelay(YOUTUBE_SHORTS_APP_CLICK_BACK_DELAY_MS)
+            }
+            return
+        }
+
+        if (!browserIsActive && !youtubeIsActive) {
             clearInstagramWebBlock()
             clearYouTubeWebBlock()
         }
@@ -350,14 +382,53 @@ class AccessibilityEventRouter(
         val isYouTubeAppSurface = result.surface == ContentSurface.YOUTUBE_APP
         val isYouTubeShortsAppSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_APP
         val isYouTubeShortsWebSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_WEB
+        val isYouTubeShortsSurface = isYouTubeShortsAppSurface || isYouTubeShortsWebSurface
         val enteredYouTubeFromExternal =
             now - lastExternalEntryAt <= YOUTUBE_FRIEND_ENTRY_WINDOW_MS ||
                 (result.surface == ContentSurface.YOUTUBE_SHORTS_WEB &&
                     lastBrowserWebsiteSurface != null &&
                     now - lastBrowserWebsiteAt <= YOUTUBE_FRIEND_ENTRY_WINDOW_MS)
-        val allowFriendYouTubeShorts = isYouTubeShortsWebSurface &&
+        val currentFriendShortsIdentity = snapshot.youtubeFriendShortsIdentity()
+        var friendAllowanceStartedThisEvent = false
+        if (
+            isYouTubeShortsSurface &&
             settings.allowYouTubeFriendShorts &&
-            enteredYouTubeFromExternal
+            enteredYouTubeFromExternal &&
+            !friendYouTubeShortsAllowanceActive
+        ) {
+            friendYouTubeShortsAllowanceActive = true
+            friendYouTubeShortsAllowanceStartedAt = now
+            friendYouTubeShortsIdentity = currentFriendShortsIdentity
+            friendAllowanceStartedThisEvent = true
+            lastExternalEntryAt = 0L
+            lastBrowserWebsiteAt = 0L
+            lastBrowserWebsiteSurface = null
+        }
+        if (!settings.allowYouTubeFriendShorts || !isYouTubeShortsSurface) {
+            friendYouTubeShortsAllowanceActive = false
+            friendYouTubeShortsAllowanceStartedAt = 0L
+            friendYouTubeShortsIdentity = null
+            youTubeFriendShortsGuardController.dismiss()
+        }
+        val friendShortsIdentityChanged = isYouTubeShortsSurface &&
+            friendYouTubeShortsAllowanceActive &&
+            friendYouTubeShortsIdentity != null &&
+            currentFriendShortsIdentity != null &&
+            friendYouTubeShortsIdentity != currentFriendShortsIdentity
+        val friendShortsScrollAttempt = isYouTubeShortsSurface &&
+            friendYouTubeShortsAllowanceActive &&
+            ((event.eventType == AccessibilityEvent.TYPE_VIEW_SCROLLED &&
+                now - friendYouTubeShortsAllowanceStartedAt >= YOUTUBE_FRIEND_SCROLL_ARM_DELAY_MS) ||
+                friendShortsIdentityChanged)
+        if (friendShortsScrollAttempt) {
+            friendYouTubeShortsAllowanceActive = false
+            friendYouTubeShortsAllowanceStartedAt = 0L
+            friendYouTubeShortsIdentity = null
+            youTubeFriendShortsGuardController.dismiss()
+        }
+        val allowFriendYouTubeShorts = isYouTubeShortsSurface &&
+            settings.allowYouTubeFriendShorts &&
+            friendYouTubeShortsAllowanceActive
         val isUninstallSurface = result.surface == ContentSurface.SETTINGS_UNINSTALL_UNREEL
         val isAccessibilityBlockerSurface = result.surface == ContentSurface.SETTINGS_ACCESSIBILITY_BLOCKER
         val isSettingsGuardSurface = isUninstallSurface || isAccessibilityBlockerSurface
@@ -388,7 +459,8 @@ class AccessibilityEventRouter(
             !allowFriendYouTubeShorts
         val youtubeShortsAppShouldBlock = result.recommendedAction == InterventionAction.BLOCK &&
             isYouTubeShortsAppSurface &&
-            settings.blockYouTubeShortsInApp
+            settings.blockYouTubeShortsInApp &&
+            !allowFriendYouTubeShorts
         val settingsGuardShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
             isSettingsGuardSurface &&
             settings.protectAppUninstall
@@ -429,6 +501,8 @@ class AccessibilityEventRouter(
                 "settingsGuardShouldBlock" to settingsGuardShouldBlock,
                 "allowFriendYouTubeShorts" to allowFriendYouTubeShorts,
                 "enteredYouTubeFromExternal" to enteredYouTubeFromExternal,
+                "friendShortsScrollAttempt" to friendShortsScrollAttempt,
+                "friendShortsIdentityChanged" to friendShortsIdentityChanged,
                 "nativeShouldBlock" to nativeShouldBlock,
                 "homeFeedSuppressedUntilDelta" to (homeFeedSuppressedUntil - now),
                 "lastHomeFeedSeenAge" to if (lastHomeFeedSeenAt == 0L) -1L else now - lastHomeFeedSeenAt
@@ -578,21 +652,31 @@ class AccessibilityEventRouter(
 
         if (!shouldBlock) {
             reverseArmed = true
-            if (isYouTubeShortsWebSurface) {
-                clearYouTubeWebBlock()
+            if (isYouTubeShortsSurface) {
                 if (allowFriendYouTubeShorts) {
-                    lastExternalEntryAt = 0L
-                    lastBrowserWebsiteAt = 0L
-                    lastBrowserWebsiteSurface = null
+                    youTubeShortsOverlayController.dismiss()
+                    lastYouTubeWebBlockAt = 0L
+                    youTubeShortsBackIssued = false
+                    if (isYouTubeShortsAppSurface) {
+                        youTubeFriendShortsGuardController.showNativeOrUpdate(snapshot)
+                    } else {
+                        youTubeFriendShortsGuardController.showOrUpdate(snapshot)
+                    }
                     recordHomeDebug(
                         phase = "decision",
-                        decision = "allow_first_youtube_friend_short",
+                        decision = if (friendAllowanceStartedThisEvent) {
+                            "allow_first_youtube_friend_short"
+                        } else {
+                            "hold_first_youtube_friend_short"
+                        },
                         event = event,
                         rootPackageName = rootPackageName,
                         snapshot = snapshot,
                         detectorResult = result,
                         homeFeedClassification = homeFeedClassification
                     )
+                } else {
+                    clearYouTubeWebBlock()
                 }
                 return
             }
@@ -628,6 +712,7 @@ class AccessibilityEventRouter(
         if (youtubeShortsWebShouldBlock) {
             clearHomeFeedBlock()
             clearInstagramWebBlock()
+            youTubeFriendShortsGuardController.dismiss()
             clearFullScreenBlockState()
             lastYouTubeWebBlockAt = now
             youTubeShortsOverlayController.showOrUpdate(
@@ -652,12 +737,18 @@ class AccessibilityEventRouter(
         if (youtubeShortsAppShouldBlock) {
             clearHomeFeedBlock()
             clearInstagramWebBlock()
+            youTubeFriendShortsGuardController.dismiss()
             clearFullScreenBlockState()
             youTubeShortsOverlayController.showNativeOrUpdate(
                 snapshot = snapshot,
                 onOpenSettings = onOpenSettings
             )
             youTubeShortsOverlayController.holdSolid()
+            if (now - lastYouTubeShortsAppBackAt >= YOUTUBE_SHORTS_APP_BACK_COOLDOWN_MS) {
+                lastYouTubeShortsAppBackAt = now
+                onProtectionEvent(ProtectionEvent.YOUTUBE_SHORT)
+                performBackAfterDelay(YOUTUBE_SHORTS_APP_DETECTED_BACK_DELAY_MS)
+            }
             return
         }
 
@@ -876,8 +967,36 @@ class AccessibilityEventRouter(
 
     private fun clearYouTubeWebBlock() {
         youTubeShortsOverlayController.dismiss()
+        youTubeFriendShortsGuardController.dismiss()
+        friendYouTubeShortsAllowanceActive = false
+        friendYouTubeShortsAllowanceStartedAt = 0L
+        friendYouTubeShortsIdentity = null
         lastYouTubeWebBlockAt = 0L
         youTubeShortsBackIssued = false
+    }
+
+    private fun WindowSnapshot.youtubeFriendShortsIdentity(): String? {
+        val carouselItem = viewIds
+            .asSequence()
+            .map(String::lowercase)
+            .firstOrNull { it.contains("carousel-item-") }
+        val videoTitle = texts
+            .asSequence()
+            .map(String::trim)
+            .firstOrNull { text ->
+                text.length > 12 && text.endsWith("- YouTube", ignoreCase = true)
+            }
+        return listOfNotNull(carouselItem, videoTitle)
+            .takeIf { it.isNotEmpty() }
+            ?.joinToString("|")
+    }
+
+    private fun AccessibilityNodeInfo?.isInstagramBrowserLiteRoot(): Boolean {
+        val root = this ?: return false
+        return INSTAGRAM_BROWSER_LITE_VIEW_IDS.any { viewId ->
+            runCatching { root.findAccessibilityNodeInfosByViewId(viewId).isNotEmpty() }
+                .getOrDefault(false)
+        }
     }
 
     private fun ContentSurface.isBrowserWebsiteSurface(): Boolean {
@@ -1121,6 +1240,24 @@ class AccessibilityEventRouter(
         return TIKTOK_MESSAGE_NAVIGATION_MARKERS.any(combined::contains)
     }
 
+    private fun AccessibilityEvent.isYouTubeShortsNavigationEvent(): Boolean {
+        if (eventType != AccessibilityEvent.TYPE_VIEW_CLICKED) return false
+
+        val sourceNode = runCatching { source }.getOrNull()
+        val labels = buildList {
+            text.forEach { value -> add(value.toString().trim().lowercase()) }
+            contentDescription?.toString()?.trim()?.lowercase()?.let(::add)
+            sourceNode?.text?.toString()?.trim()?.lowercase()?.let(::add)
+            sourceNode?.contentDescription?.toString()?.trim()?.lowercase()?.let(::add)
+        }
+        val viewId = sourceNode?.viewIdResourceName.orEmpty().lowercase()
+        val exactShortsLabel = labels.any { label ->
+            label == "shorts" || label == "youtube shorts" || label.startsWith("shorts,")
+        }
+        val shortsResourceId = YOUTUBE_SHORTS_NAVIGATION_ID_MARKERS.any(viewId::contains)
+        return exactShortsLabel || shortsResourceId
+    }
+
     private fun AccessibilityEvent.isHomeFeedEnterNavigationEvent(): Boolean {
         if (
             eventType != AccessibilityEvent.TYPE_VIEW_CLICKED &&
@@ -1170,7 +1307,11 @@ class AccessibilityEventRouter(
         const val WEB_OVERLAY_SELF_EVENT_GRACE_MS = 2_500L
         const val YOUTUBE_APP_RETURN_COOLDOWN_MS = 750L
         const val YOUTUBE_SHORTS_BACK_COOLDOWN_MS = 750L
+        const val YOUTUBE_SHORTS_APP_BACK_COOLDOWN_MS = 700L
+        const val YOUTUBE_SHORTS_APP_CLICK_BACK_DELAY_MS = 140L
+        const val YOUTUBE_SHORTS_APP_DETECTED_BACK_DELAY_MS = 90L
         const val YOUTUBE_FRIEND_ENTRY_WINDOW_MS = 10_000L
+        const val YOUTUBE_FRIEND_SCROLL_ARM_DELAY_MS = 550L
         const val TOTAL_ACCESS_RETURN_COOLDOWN_MS = 650L
         val HOME_FEED_EXIT_NAVIGATION_ID_MARKERS = setOf(
             "action_bar_button_direct",
@@ -1201,6 +1342,18 @@ class AccessibilityEventRouter(
         val HOME_FEED_STORY_OPEN_LABEL_MARKERS = setOf(
             "open story",
             "story"
+        )
+        val YOUTUBE_SHORTS_NAVIGATION_ID_MARKERS = setOf(
+            "shorts_tab",
+            "shorts_pivot",
+            "pivot_shorts",
+            "reel_watch",
+            "reel_tab"
+        )
+        val INSTAGRAM_BROWSER_LITE_VIEW_IDS = setOf(
+            "com.instagram.android:id/browser_lite_root_container",
+            "com.instagram.android:id/browser_wrapper_view",
+            "com.instagram.android:id/browser_chrome_container"
         )
         val HOME_FEED_CLEAR_SURFACES = setOf(
             ContentSurface.INSTAGRAM_REELS,

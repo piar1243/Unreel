@@ -1,7 +1,7 @@
 package com.example.welive.detection.platforms.instagramweb
 
 object BrowserPackageConfig {
-    private val supportedPackages = setOf(
+    private val dedicatedBrowserPackages = setOf(
         "com.android.chrome",
         "com.chrome.beta",
         "com.chrome.dev",
@@ -16,7 +16,22 @@ object BrowserPackageConfig {
         "com.vivaldi.browser"
     )
 
+    private val embeddedBrowserPackages = setOf(
+        "com.google.android.gm",
+        "com.google.android.googlequicksearchbox",
+        "com.google.android.webview",
+        "com.android.webview"
+    )
+
     fun isSupported(packageName: String): Boolean {
-        return packageName in supportedPackages
+        return isDedicatedBrowser(packageName) || isEmbeddedBrowserHost(packageName)
+    }
+
+    fun isDedicatedBrowser(packageName: String): Boolean {
+        return packageName in dedicatedBrowserPackages
+    }
+
+    fun isEmbeddedBrowserHost(packageName: String): Boolean {
+        return packageName in embeddedBrowserPackages
     }
 }

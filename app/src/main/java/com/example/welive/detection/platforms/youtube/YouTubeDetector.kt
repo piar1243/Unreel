@@ -45,11 +45,29 @@ class YouTubeDetector : ContentDetector {
             return unknown(snapshot, "Browser address entry or suggestions are active")
         }
 
+        if (snapshot.looksLikeEmbeddedWebShortsPlayer()) {
+            return DetectionResult(
+                platform = Platform.YOUTUBE_WEB,
+                surface = ContentSurface.YOUTUBE_SHORTS_WEB,
+                confidence = 0.99f,
+                packageName = snapshot.packageName,
+                reasons = listOf(
+                    "Embedded YouTube Shorts player structure is visible",
+                    "Shorts carousel and video controls are visible"
+                ),
+                recommendedAction = InterventionAction.BLOCK
+            )
+        }
+
+        val displayHeight = snapshot.nodeFeatures.maxOfOrNull { it.boundsBottom } ?: 0
         val loadedShortsAddress = snapshot.nodeFeatures.firstNotNullOfOrNull { feature ->
             feature.combinedText().takeIf {
-                feature.isBrowserAddressInput() &&
-                    !feature.isFocused &&
-                    it.containsYouTubeShortsUrl()
+                !feature.isFocused &&
+                    it.containsYouTubeShortsUrl() &&
+                    (feature.isBrowserAddressInput() ||
+                        (snapshot.hasBrowserChromeSignal() &&
+                            displayHeight > 0 &&
+                            feature.boundsTop < displayHeight * 0.34f))
             }
         } ?: return unknown(snapshot, "Loaded browser address is not a YouTube Shorts URL")
 
@@ -78,30 +96,63 @@ class YouTubeDetector : ContentDetector {
             val combined = feature.combinedText()
             NATIVE_SHORTS_PLAYER_MARKERS.any(combined::contains)
         }
-        val actionControlCount = visibleNodes.count { feature ->
-            val combined = feature.combinedText()
-            NATIVE_SHORTS_ACTION_MARKERS.any(combined::contains) &&
-                feature.boundsTop > displayHeight * 0.18f
+        val hasShortsLabel = visibleNodes.any { feature ->
+            feature.text?.trim()?.equals("shorts", ignoreCase = true) == true ||
+                feature.contentDescription?.trim()?.equals("shorts", ignoreCase = true) == true
         }
-        val hasTallMediaSurface = visibleNodes.any { feature ->
+        val rightSideActions = visibleNodes.mapNotNull { feature ->
+            val combined = feature.combinedText()
+            val marker = NATIVE_SHORTS_ACTION_MARKERS.firstOrNull(combined::contains)
+                ?: return@mapNotNull null
+            marker to feature
+        }.filter { (_, feature) ->
+            feature.boundsLeft > displayWidth * 0.52f &&
+                feature.boundsTop > displayHeight * 0.15f
+        }
+        val distinctActionCount = rightSideActions.map { it.first }.distinct().size
+        val actionVerticalSpan = if (rightSideActions.size >= 2) {
+            val centers = rightSideActions.map { (_, feature) ->
+                (feature.boundsTop + feature.boundsBottom) / 2
+            }
+            centers.maxOrNull()!! - centers.minOrNull()!!
+        } else {
+            0
+        }
+        val hasLargePlayerContainer = visibleNodes.any { feature ->
             val width = feature.boundsRight - feature.boundsLeft
             val height = feature.boundsBottom - feature.boundsTop
-            val className = feature.className.orEmpty().lowercase()
             width > displayWidth * 0.68f &&
-                height > displayHeight * 0.55f &&
-                (className.contains("surface") ||
-                    className.contains("texture") ||
-                    className.contains("player") ||
-                    className.contains("image") ||
-                    className.contains("webview"))
+                height > displayHeight * 0.48f
         }
 
-        return hasShortsPlayerMarker && actionControlCount >= 2 && hasTallMediaSurface
+        val explicitPlayerSignature = hasShortsPlayerMarker && distinctActionCount >= 2
+        val structuralPlayerSignature = hasShortsLabel &&
+            distinctActionCount >= 3 &&
+            actionVerticalSpan > displayHeight * 0.16f &&
+            hasLargePlayerContainer
+        return explicitPlayerSignature || structuralPlayerSignature
     }
 
     private fun WindowSnapshot.hasSupportedBrowserPackage(): Boolean {
         return listOf(packageName, rootPackageName, eventPackageName)
             .any(BrowserPackageConfig::isSupported)
+    }
+
+    private fun WindowSnapshot.looksLikeEmbeddedWebShortsPlayer(): Boolean {
+        val normalizedIds = nodeFeatures
+            .asSequence()
+            .filter { it.isVisibleToUser }
+            .mapNotNull { it.viewId?.lowercase() }
+            .toSet()
+        val strongMarkerCount = EMBEDDED_SHORTS_ID_MARKERS.count { marker ->
+            normalizedIds.any { id -> id.contains(marker) }
+        }
+        val hasVideoNavigation = nodeFeatures.any { feature ->
+            val description = feature.contentDescription.orEmpty().lowercase()
+            description == "next video" || description == "previous video"
+        }
+        return strongMarkerCount >= 2 ||
+            (strongMarkerCount >= 1 && hasVideoNavigation)
     }
 
     private fun WindowSnapshot.hasBrowserChromeSignal(): Boolean {
@@ -190,16 +241,30 @@ class YouTubeDetector : ContentDetector {
             "shorts_video",
             "shorts_viewer",
             "shorts_container",
-            "reels_player"
+            "reels_player",
+            "reel_watch",
+            "reel_player",
+            "reel_recycler",
+            "reel_pager",
+            "reel_video"
         )
 
         val NATIVE_SHORTS_ACTION_MARKERS = listOf(
-            "like",
             "dislike",
+            "like",
             "comment",
             "share",
             "remix",
             "subscribe"
+        )
+
+        val EMBEDDED_SHORTS_ID_MARKERS = listOf(
+            "player-shorts-container",
+            "shorts-video",
+            "shorts-moveable-container",
+            "carousel-scrollable-wrapper",
+            "carousel-items",
+            "carousel-item-"
         )
     }
 }

@@ -1,5 +1,9 @@
 package com.example.welive.ui
 
+import android.graphics.Bitmap
+import android.graphics.Canvas
+import android.graphics.drawable.BitmapDrawable
+import android.graphics.drawable.Drawable
 import android.app.Activity
 import android.app.KeyguardManager
 import android.content.Intent
@@ -23,6 +27,7 @@ import androidx.compose.foundation.layout.Spacer
 import androidx.compose.foundation.layout.fillMaxSize
 import androidx.compose.foundation.layout.fillMaxWidth
 import androidx.compose.foundation.layout.height
+import androidx.compose.foundation.layout.navigationBarsPadding
 import androidx.compose.foundation.layout.padding
 import androidx.compose.foundation.layout.size
 import androidx.compose.foundation.lazy.LazyColumn
@@ -55,6 +60,8 @@ import androidx.compose.ui.Alignment
 import androidx.compose.ui.Modifier
 import androidx.compose.ui.draw.clip
 import androidx.compose.ui.graphics.Color
+import androidx.compose.ui.graphics.asImageBitmap
+import androidx.compose.ui.graphics.painter.BitmapPainter
 import androidx.compose.ui.platform.LocalContext
 import androidx.compose.ui.res.painterResource
 import androidx.compose.ui.text.input.KeyboardType
@@ -119,6 +126,7 @@ fun WeLiveApp() {
     }
     var openLimitResetCountdown by remember { mutableStateOf(formatOpenLimitResetCountdown()) }
     var selectedTab by remember { mutableStateOf(AppDashboardTab.Home) }
+    var showUnavailableProtectedApps by rememberSaveable { mutableStateOf(false) }
     var onboardingWeeklyMinutes by rememberSaveable { mutableStateOf(14 * 60) }
     var sessionUnlocked by rememberSaveable { mutableStateOf(false) }
     var unlockPin by rememberSaveable { mutableStateOf("") }
@@ -283,13 +291,18 @@ fun WeLiveApp() {
             state = dashboardListState,
             modifier = Modifier
                 .fillMaxSize()
-                .background(Carbon),
-            contentPadding = androidx.compose.foundation.layout.PaddingValues(20.dp),
+                .background(Carbon)
+                .navigationBarsPadding(),
+            contentPadding = androidx.compose.foundation.layout.PaddingValues(
+                start = 20.dp,
+                top = 20.dp,
+                end = 20.dp,
+                bottom = 44.dp
+            ),
             verticalArrangement = Arrangement.spacedBy(18.dp)
         ) {
             item {
                 Header(
-                    settings = settings,
                     dataSelected = selectedTab == AppDashboardTab.Data,
                     onDataClick = {
                         selectedTab = if (selectedTab == AppDashboardTab.Data) {
@@ -884,7 +897,6 @@ private fun HomeDashboard(
         }
 
         ProtectionBreakdown(settings)
-        BestSetupStatus(settings)
     }
 }
 
@@ -1397,13 +1409,9 @@ private fun AppSecurityPanel(
 
 @Composable
 private fun Header(
-    settings: AppSettings,
     dataSelected: Boolean,
     onDataClick: () -> Unit
 ) {
-    val protectionActive = settings.blockInstagramReels ||
-        settings.blockYouTubeApp ||
-        settings.blockYouTubeShortsWebsite
     Row(
         modifier = Modifier
             .fillMaxWidth()
@@ -1443,21 +1451,6 @@ private fun Header(
             }
         }
         Column(horizontalAlignment = Alignment.End) {
-            Row(
-                modifier = Modifier
-                    .background(Ink, RoundedCornerShape(8.dp))
-                    .border(1.dp, Graphite, RoundedCornerShape(8.dp))
-                    .padding(horizontal = 10.dp, vertical = 7.dp),
-                verticalAlignment = Alignment.CenterVertically,
-                horizontalArrangement = Arrangement.spacedBy(7.dp)
-            ) {
-                Box(
-                    modifier = Modifier
-                        .size(7.dp)
-                        .background(if (protectionActive) SignalGreen else Steel, RoundedCornerShape(4.dp))
-                )
-                Text(if (protectionActive) "LIVE" else "PAUSED", color = Paper, style = MaterialTheme.typography.labelMedium, fontWeight = FontWeight.Bold)
-            }
             Text(
                 text = if (dataSelected) "Close data" else "Data",
                 modifier = Modifier
@@ -1570,6 +1563,14 @@ private fun ProtectedAppsPanel(
     onBlockTikTokShortFormChange: (Boolean) -> Unit,
     openLimitResetCountdown: String
 ) {
+    val context = LocalContext.current
+    val installedApps = ProtectedApp.entries.filter { app ->
+        app.packageNames.any { packageName ->
+            runCatching { context.packageManager.getApplicationInfo(packageName, 0) }.isSuccess
+        }
+    }
+    val unavailableApps = ProtectedApp.entries - installedApps.toSet()
+    var showUnavailableApps by rememberSaveable { mutableStateOf(false) }
     val scheduleWindows = settings.instagramAccessSchedule.ifEmpty {
         InstagramAccessScheduleCodec.defaultWindows()
     }
@@ -1587,7 +1588,16 @@ private fun ProtectedAppsPanel(
         )
         Spacer(modifier = Modifier.height(4.dp))
 
-        ProtectedApp.entries.forEach { app ->
+        if (installedApps.isEmpty()) {
+            Text(
+                text = "No protected apps installed on this device.",
+                color = Steel,
+                style = MaterialTheme.typography.bodyMedium
+            )
+        }
+
+        @Composable
+        fun AppCard(app: ProtectedApp) {
             val expanded = expandedApp == app
             Panel(borderColor = if (expanded) Paper.copy(alpha = 0.18f) else Graphite) {
                 Row(
@@ -1609,11 +1619,7 @@ private fun ProtectedAppsPanel(
                                 .background(appAccent(app).copy(alpha = 0.12f)),
                             contentAlignment = Alignment.Center
                         ) {
-                            Text(
-                                text = app.displayName.take(1),
-                                color = appAccent(app),
-                                fontWeight = FontWeight.Bold
-                            )
+                            ProtectedAppIcon(app)
                         }
                         Column {
                             Text(app.displayName, color = Paper, fontWeight = FontWeight.SemiBold)
@@ -1715,6 +1721,82 @@ private fun ProtectedAppsPanel(
                 }
             }
         }
+
+        installedApps.forEach { app -> AppCard(app) }
+
+        if (unavailableApps.isNotEmpty()) {
+            Row(
+                modifier = Modifier
+                    .fillMaxWidth()
+                    .clip(RoundedCornerShape(8.dp))
+                    .background(Ink)
+                    .border(1.dp, Graphite, RoundedCornerShape(8.dp))
+                    .clickable { showUnavailableApps = !showUnavailableApps }
+                    .padding(horizontal = 16.dp, vertical = 14.dp),
+                horizontalArrangement = Arrangement.SpaceBetween,
+                verticalAlignment = Alignment.CenterVertically
+            ) {
+                Column(modifier = Modifier.weight(1f)) {
+                    Text("Available to add", color = Paper, fontWeight = FontWeight.SemiBold)
+                    Text(
+                        "${unavailableApps.size} protected apps not installed",
+                        color = Steel,
+                        style = MaterialTheme.typography.bodySmall
+                    )
+                }
+                Text(
+                    text = if (showUnavailableApps) "Hide" else "Show",
+                    color = SignalCyan,
+                    style = MaterialTheme.typography.labelLarge,
+                    fontWeight = FontWeight.SemiBold
+                )
+            }
+            if (showUnavailableApps) {
+                unavailableApps.forEach { app -> AppCard(app) }
+            }
+        }
+    }
+}
+
+@Composable
+private fun ProtectedAppIcon(app: ProtectedApp) {
+    val context = LocalContext.current
+    val drawable = remember(app) {
+        app.packageNames.asSequence()
+            .mapNotNull { packageName ->
+                runCatching {
+                    val applicationInfo = context.packageManager.getApplicationInfo(packageName, 0)
+                    context.packageManager.getApplicationIcon(applicationInfo)
+                }.getOrNull()
+            }
+            .firstOrNull()
+    }
+
+    if (drawable == null) {
+        Text(
+            text = app.displayName.take(1),
+            color = appAccent(app),
+            fontWeight = FontWeight.Bold
+        )
+    } else {
+        val bitmap = remember(drawable) { drawable.toBitmap() }
+        Image(
+            painter = BitmapPainter(bitmap.asImageBitmap()),
+            contentDescription = "${app.displayName} icon",
+            modifier = Modifier.size(30.dp)
+        )
+    }
+}
+
+private fun Drawable.toBitmap(): Bitmap {
+    if (this is BitmapDrawable && bitmap != null) return bitmap
+    // Adaptive launcher drawables can report invalid intrinsic bounds. Draw them
+    // into a stable bitmap so the row never receives a blank or 1px icon.
+    val size = 96
+    return Bitmap.createBitmap(size, size, Bitmap.Config.ARGB_8888).also { bitmap ->
+        val canvas = Canvas(bitmap)
+        setBounds(0, 0, size, size)
+        draw(canvas)
     }
 }
 

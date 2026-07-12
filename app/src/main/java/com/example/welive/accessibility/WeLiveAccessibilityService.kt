@@ -29,6 +29,7 @@ import com.example.welive.intervention.HomeFeedAudioController
 import com.example.welive.intervention.HomeFeedOverlayController
 import com.example.welive.intervention.InstagramWebOverlayController
 import com.example.welive.intervention.YouTubeShortsOverlayController
+import com.example.welive.intervention.YouTubeFriendShortsGuardController
 import com.example.welive.intervention.TikTokOverlayController
 import com.example.welive.intervention.TikTokAudioController
 import com.example.welive.intervention.OverlayController
@@ -54,6 +55,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private lateinit var homeFeedOverlayController: HomeFeedOverlayController
     private lateinit var instagramWebOverlayController: InstagramWebOverlayController
     private lateinit var youTubeShortsOverlayController: YouTubeShortsOverlayController
+    private lateinit var youTubeFriendShortsGuardController: YouTubeFriendShortsGuardController
     private lateinit var tikTokOverlayController: TikTokOverlayController
     private lateinit var tikTokAudioController: TikTokAudioController
     private lateinit var systemGrayscaleController: SystemGrayscaleController
@@ -91,6 +93,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
         )
         instagramWebOverlayController = InstagramWebOverlayController(this)
         youTubeShortsOverlayController = YouTubeShortsOverlayController(this)
+        youTubeFriendShortsGuardController = YouTubeFriendShortsGuardController(this)
         tikTokOverlayController = TikTokOverlayController(this)
         tikTokAudioController = TikTokAudioController(this)
         val audioManager = getSystemService(AudioManager::class.java)
@@ -99,11 +102,11 @@ class WeLiveAccessibilityService : AccessibilityService() {
                 musicActiveProvider = { audioManager?.isMusicActive == true }
             ),
             detectors = listOf(
+                YouTubeDetector(),
                 InstagramDetector(),
                 TikTokDetector(),
                 SettingsUninstallDetector(),
                 InstagramWebDetector(),
-                YouTubeDetector(),
                 ProtectedWebsiteDetector()
             ),
             overlayController = overlayController,
@@ -111,11 +114,18 @@ class WeLiveAccessibilityService : AccessibilityService() {
             homeFeedOverlayController = homeFeedOverlayController,
             instagramWebOverlayController = instagramWebOverlayController,
             youTubeShortsOverlayController = youTubeShortsOverlayController,
+            youTubeFriendShortsGuardController = youTubeFriendShortsGuardController,
             tikTokOverlayController = tikTokOverlayController,
             tikTokAudioController = tikTokAudioController,
             homeFeedClassifier = InstagramHomeFeedClassifier(),
             homeFeedRegionResolver = InstagramHomeFeedRegionResolver(),
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
+            performBackAfterDelay = { delayMillis ->
+                mainHandler.postDelayed(
+                    { performGlobalAction(GLOBAL_ACTION_BACK) },
+                    delayMillis
+                )
+            },
             performHome = { performGlobalAction(GLOBAL_ACTION_HOME) },
             onAllowOneMinute = {
                 serviceScope.launch { settingsRepository.allowTemporarily(60_000L) }
@@ -197,6 +207,9 @@ class WeLiveAccessibilityService : AccessibilityService() {
         }
         if (::youTubeShortsOverlayController.isInitialized) {
             youTubeShortsOverlayController.dismiss()
+        }
+        if (::youTubeFriendShortsGuardController.isInitialized) {
+            youTubeFriendShortsGuardController.dismiss()
         }
         if (::tikTokOverlayController.isInitialized) {
             tikTokOverlayController.dismissImmediately()
