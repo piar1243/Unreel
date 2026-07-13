@@ -24,6 +24,7 @@ import com.example.welive.detection.platforms.instagramweb.BrowserPackageConfig
 import com.example.welive.detection.platforms.instagramweb.InstagramWebDetector
 import com.example.welive.detection.platforms.youtube.YouTubeDetector
 import com.example.welive.detection.platforms.tiktok.TikTokDetector
+import com.example.welive.detection.platforms.linkedin.LinkedInDetector
 import com.example.welive.detection.platforms.protectedweb.ProtectedWebsiteDetector
 import com.example.welive.intervention.HomeFeedAudioController
 import com.example.welive.intervention.HomeFeedOverlayController
@@ -32,11 +33,14 @@ import com.example.welive.intervention.YouTubeShortsOverlayController
 import com.example.welive.intervention.YouTubeFriendShortsGuardController
 import com.example.welive.intervention.TikTokOverlayController
 import com.example.welive.intervention.TikTokAudioController
+import com.example.welive.intervention.LinkedInOverlayController
+import com.example.welive.intervention.ProtectedWebsiteOverlayController
 import com.example.welive.intervention.OverlayController
 import com.example.welive.intervention.SystemGrayscaleController
 import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.settings.AppSettings
 import com.example.welive.settings.UserRulesRepository
+import com.example.welive.protection.ProtectedApp
 import com.example.welive.training.TrainingCaptureState
 import java.time.LocalDate
 import java.time.ZonedDateTime
@@ -59,6 +63,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
     private lateinit var youTubeFriendShortsGuardController: YouTubeFriendShortsGuardController
     private lateinit var tikTokOverlayController: TikTokOverlayController
     private lateinit var tikTokAudioController: TikTokAudioController
+    private lateinit var linkedInOverlayController: LinkedInOverlayController
+    private lateinit var protectedWebsiteOverlayControllers: Map<ProtectedApp, ProtectedWebsiteOverlayController>
     private lateinit var systemGrayscaleController: SystemGrayscaleController
     private lateinit var deviceOwnerPolicyController: DeviceOwnerPolicyController
     private lateinit var eventRouter: AccessibilityEventRouter
@@ -97,6 +103,10 @@ class WeLiveAccessibilityService : AccessibilityService() {
         youTubeFriendShortsGuardController = YouTubeFriendShortsGuardController(this)
         tikTokOverlayController = TikTokOverlayController(this)
         tikTokAudioController = TikTokAudioController(this)
+        linkedInOverlayController = LinkedInOverlayController(this)
+        protectedWebsiteOverlayControllers = ProtectedApp.entries
+            .filterNot { it == ProtectedApp.INSTAGRAM }
+            .associateWith { app -> ProtectedWebsiteOverlayController(this, app) }
         val audioManager = getSystemService(AudioManager::class.java)
         eventRouter = AccessibilityEventRouter(
             snapshotReader = WindowSnapshotReader(
@@ -106,6 +116,7 @@ class WeLiveAccessibilityService : AccessibilityService() {
                 YouTubeDetector(),
                 InstagramDetector(),
                 TikTokDetector(),
+                LinkedInDetector(),
                 SettingsUninstallDetector(),
                 InstagramWebDetector(),
                 ProtectedWebsiteDetector()
@@ -118,6 +129,8 @@ class WeLiveAccessibilityService : AccessibilityService() {
             youTubeFriendShortsGuardController = youTubeFriendShortsGuardController,
             tikTokOverlayController = tikTokOverlayController,
             tikTokAudioController = tikTokAudioController,
+            linkedInOverlayController = linkedInOverlayController,
+            protectedWebsiteOverlayControllers = protectedWebsiteOverlayControllers,
             homeFeedClassifier = InstagramHomeFeedClassifier(),
             homeFeedRegionResolver = InstagramHomeFeedRegionResolver(),
             performBack = { performGlobalAction(GLOBAL_ACTION_BACK) },
@@ -143,6 +156,11 @@ class WeLiveAccessibilityService : AccessibilityService() {
             onScreenTimeExposure = { category, durationMillis ->
                 serviceScope.launch {
                     settingsRepository.addScreenTime(category, durationMillis)
+                }
+            },
+            onInstagramReelsAllowanceConsumed = { dateKey, durationMillis ->
+                serviceScope.launch {
+                    settingsRepository.addInstagramReelsAllowanceUsage(dateKey, durationMillis)
                 }
             },
             appPackageName = packageName
@@ -222,6 +240,14 @@ class WeLiveAccessibilityService : AccessibilityService() {
         }
         if (::tikTokAudioController.isInitialized) {
             tikTokAudioController.restore()
+        }
+        if (::linkedInOverlayController.isInitialized) {
+            linkedInOverlayController.dismissImmediately()
+        }
+        if (::protectedWebsiteOverlayControllers.isInitialized) {
+            protectedWebsiteOverlayControllers.values.forEach {
+                it.dismissImmediately()
+            }
         }
         if (::homeFeedAudioController.isInitialized) {
             homeFeedAudioController.restore()
@@ -454,7 +480,9 @@ class WeLiveAccessibilityService : AccessibilityService() {
             eventPackageName == packageName && !eventClassName.contains("MainActivity") -> {
                 matchingWindowRoot { rootPackage ->
                     rootPackage == InstagramPackageConfig.PACKAGE_NAME ||
-                        SettingsPackageConfig.isSupported(rootPackage)
+                        SettingsPackageConfig.isSupported(rootPackage) ||
+                        BrowserPackageConfig.isSupported(rootPackage) ||
+                        ProtectedApp.fromPackage(rootPackage) != null
                 } ?: activeRoot
             }
             else -> activeRoot

@@ -76,37 +76,17 @@ class InstagramHomeFeedRegionResolver {
                 "profile_tab"
             )
         }
-        val feedNodes = visibleNodes.filter { node ->
-            node.matchesAnyId(
-                "android:id/list",
-                "row_feed_photo_imageview",
-                "row_feed_profile_header",
-                "row_feed_photo_profile_imageview",
-                "row_feed_photo_profile_name",
-                "row_feed_view_group_buttons",
-                "row_feed_button_like",
-                "row_feed_button_comment",
-                "row_feed_button_share",
-                "row_feed_button_save",
-                "media_group",
-                "media_option_button",
-                "inline_follow_button",
-                "end_of_feed_demarcator_container"
-            )
-        }
-
-        val storiesBottom = storyNodes.maxOfOrNull { it.boundsBottom } ?: (screenHeight * 0.18f).toInt()
+        // Feed-item bounds are unstable: promoted rows, end-of-feed cards, and
+        // inline Reels can all move them. The story tray and bottom navigation
+        // are the two stable edges of the home-feed blocking region.
+        if (navNodes.size < MIN_BOTTOM_NAV_ANCHORS) return null
+        val storiesBottom = storyNodes.maxOfOrNull { it.boundsBottom }
+            ?: (screenHeight * FALLBACK_STORY_TRAY_BOTTOM_RATIO).toInt()
         val storiesTop = storyTapTargets.minOfOrNull { it.top } ?: storyNodes.minOfOrNull { it.boundsTop }
-        val bottomNavTop = navNodes.minOfOrNull { it.boundsTop } ?: (screenHeight * 0.9f).toInt()
+        val bottomNavTop = navNodes.minOf { it.boundsTop }
         val bottomNavBottom = navNodes.maxOfOrNull { it.boundsBottom } ?: screenHeight
-        val feedTop = maxOf(
-            storiesBottom + gutter,
-            feedNodes.minOfOrNull { it.boundsTop } ?: storiesBottom + gutter
-        )
-        val feedBottom = minOf(
-            bottomNavTop - gutter,
-            feedNodes.maxOfOrNull { it.boundsBottom } ?: bottomNavTop - gutter
-        )
+        val feedTop = storiesBottom + gutter
+        val feedBottom = bottomNavTop - gutter
 
         val overlayTop = (storiesTop ?: feedTop).coerceIn(0, screenHeight)
         val blockerBottom = (feedBottom - BOTTOM_TRIM_PX).coerceIn(0, screenHeight)
@@ -196,5 +176,7 @@ class InstagramHomeFeedRegionResolver {
         private const val MIN_SCREEN_HEIGHT = 480
         private const val MAX_REASONABLE_SCREEN_WIDTH = 1600
         private const val MAX_REASONABLE_SCREEN_HEIGHT = 3200
+        private const val MIN_BOTTOM_NAV_ANCHORS = 3
+        private const val FALLBACK_STORY_TRAY_BOTTOM_RATIO = 0.18f
     }
 }

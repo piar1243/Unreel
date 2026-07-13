@@ -2,7 +2,6 @@ package com.example.welive.accessibility
 
 import android.view.accessibility.AccessibilityEvent
 import android.view.accessibility.AccessibilityNodeInfo
-import android.util.Log
 import com.example.welive.analytics.ProtectionEvent
 import com.example.welive.analytics.ScreenTimeCategory
 import com.example.welive.detection.ContentDetector
@@ -30,9 +29,12 @@ import com.example.welive.intervention.YouTubeShortsOverlayController
 import com.example.welive.intervention.YouTubeFriendShortsGuardController
 import com.example.welive.intervention.TikTokOverlayController
 import com.example.welive.intervention.TikTokAudioController
+import com.example.welive.intervention.LinkedInOverlayController
+import com.example.welive.intervention.ProtectedWebsiteOverlayController
 import com.example.welive.settings.AppSettings
 import com.example.welive.training.TrainingCaptureState
 import com.example.welive.protection.ProtectedApp
+import java.time.LocalDate
 
 class AccessibilityEventRouter(
     private val snapshotReader: WindowSnapshotReader,
@@ -45,6 +47,8 @@ class AccessibilityEventRouter(
     private val youTubeFriendShortsGuardController: YouTubeFriendShortsGuardController,
     private val tikTokOverlayController: TikTokOverlayController,
     private val tikTokAudioController: TikTokAudioController,
+    private val linkedInOverlayController: LinkedInOverlayController,
+    private val protectedWebsiteOverlayControllers: Map<ProtectedApp, ProtectedWebsiteOverlayController>,
     private val homeFeedClassifier: InstagramHomeFeedClassifier,
     private val homeFeedRegionResolver: InstagramHomeFeedRegionResolver,
     private val performBack: () -> Unit,
@@ -55,6 +59,7 @@ class AccessibilityEventRouter(
     private val onProtectionEvent: (ProtectionEvent) -> Unit,
     private val onShortFormExposure: (Long) -> Unit,
     private val onScreenTimeExposure: (ScreenTimeCategory, Long) -> Unit,
+    private val onInstagramReelsAllowanceConsumed: (String, Long) -> Unit,
     private val appPackageName: String
 ) {
     private var lastProcessedAt = 0L
@@ -89,8 +94,19 @@ class AccessibilityEventRouter(
     private var cachedHomeFeedBlockerRegion: ScreenRegion? = null
     private var cachedHomeFeedStoryTapTargets: List<ScreenRegion> = emptyList()
     private var lastTotalAppReturnAt = 0L
-    private var lastTotalWebsiteSurface: ContentSurface? = null
+    private var activeProtectedWebsiteApp: ProtectedApp? = null
     private var settingsGuardActive = false
+    private var linkedInOverlayActive = false
+    private var linkedInBackIssued = false
+    private var linkedInBackPerformedAt = 0L
+    private var linkedInBackCooldownUntil = 0L
+    private var linkedInBackRequestId = 0L
+    private var reelsAllowanceDate = ""
+    private var reelsAllowanceLocalUsedMillis = 0L
+    private var reelsAllowancePersistedMillis = 0L
+    private var reelsAllowanceLastTickAt = 0L
+    private var reelsAllowanceKnownDate = ""
+    private var reelsAllowanceKnownUsedMillis = 0L
 
     fun dismissAllNow() {
         clearAllBlockers()
@@ -199,6 +215,9 @@ class AccessibilityEventRouter(
                     now - lastYouTubeWebBlockAt < WEB_OVERLAY_SELF_EVENT_GRACE_MS
                 ) {
                     youTubeShortsOverlayController.holdSolid()
+                }
+                if (protectedWebsiteOverlayControllers.values.any { it.isShowing }) {
+                    holdActiveProtectedWebsiteBlock()
                 }
                 recordHomeDebug("event", "ignore_app_overlay_event", event, rootPackageName)
                 return
@@ -319,25 +338,6 @@ class AccessibilityEventRouter(
         if (snapshot.rootPackageName == InstagramPackageConfig.PACKAGE_NAME) {
             TrainingCaptureState.recordInstagramSnapshot(snapshot)
         }
-        if (browserIsActive) {
-            val browserSignals = snapshot.nodeFeatures
-                .asSequence()
-                .filter { feature ->
-                    val combined = listOfNotNull(feature.text, feature.contentDescription, feature.viewId)
-                        .joinToString(" ")
-                        .lowercase()
-                    combined.contains("url_bar") ||
-                        combined.contains("location_bar") ||
-                        combined.contains("youtube.com/shorts") ||
-                        combined.contains("tiktok.com") ||
-                        combined.contains("linkedin.com")
-                }
-                .take(12)
-                .joinToString(" | ") { feature ->
-                    "id=${feature.viewId},text=${feature.text},focused=${feature.isFocused}"
-                }
-            Log.d("UnreelWeb", "snapshot pkg=${snapshot.packageName} nodes=${snapshot.nodeCount} signals=$browserSignals")
-        }
         if (snapshot.isSettingsSnapshot()) {
             TrainingCaptureState.recordSettingsSnapshot(snapshot)
         }
@@ -346,6 +346,10 @@ class AccessibilityEventRouter(
             .map { detector -> detector.detect(snapshot) }
             .firstOrNull { it.platform != Platform.UNKNOWN }
             ?: run {
+                if (browserIsActive && activeProtectedWebsiteApp != null) {
+                    holdActiveProtectedWebsiteBlock()
+                    return
+                }
                 if (
                     browserIsActive &&
                     instagramWebOverlayController.isShowing &&
@@ -399,13 +403,6 @@ class AccessibilityEventRouter(
         val homeFeedClassification = homeFeedClassifier.classify(snapshot)
 
         DetectionDiagnostics.record(result)
-        if (browserIsActive) {
-            Log.d(
-                "UnreelWeb",
-                "result=${result.surface} platform=${result.platform} action=${result.recommendedAction} " +
-                    "reason=${result.reasons.joinToString()}"
-            )
-        }
         updateShortFormExposure(result.surface, now)
         updateScreenTimeExposure(result.screenTimeCategory(), now)
 
@@ -417,6 +414,7 @@ class AccessibilityEventRouter(
         val isYouTubeShortsAppSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_APP
         val isYouTubeShortsWebSurface = result.surface == ContentSurface.YOUTUBE_SHORTS_WEB
         val isYouTubeShortsSurface = isYouTubeShortsAppSurface || isYouTubeShortsWebSurface
+        val isLinkedInShortFormSurface = result.surface == ContentSurface.LINKEDIN_SHORTFORM
         val enteredYouTubeFromExternal =
             now - lastExternalEntryAt <= YOUTUBE_FRIEND_ENTRY_WINDOW_MS ||
                 (result.surface == ContentSurface.YOUTUBE_SHORTS_WEB &&
@@ -469,14 +467,33 @@ class AccessibilityEventRouter(
         val protectedWebsiteApp = result.surface.protectedWebsiteApp()
         val protectedWebsiteShouldBlock = protectedWebsiteApp != null &&
             settings.isTotalWebsiteBlocked(protectedWebsiteApp)
+        if (
+            result.surface == ContentSurface.PROTECTED_WEBSITE_ADDRESS_ENTRY ||
+            result.surface == ContentSurface.PROTECTED_WEBSITE_SAFE ||
+            (browserIsActive && result.platform != Platform.PROTECTED_WEB)
+        ) {
+            clearProtectedWebsiteBlocks()
+        } else if (protectedWebsiteApp != null && !protectedWebsiteShouldBlock) {
+            clearProtectedWebsiteBlocks()
+        }
         val tikTokShortFormShouldBlock = result.surface == ContentSurface.TIKTOK_SHORTFORM &&
             settings.blockTikTokShortForm
+        val linkedInShortFormShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
+            isLinkedInShortFormSurface &&
+            settings.blockLinkedInShortForm
         val friendReelAllowed = result.surface == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND &&
             settings.allowInstagramReelsFromFriends
+        val reelsAllowanceActive = updateInstagramReelsAllowance(
+            ordinaryReelIsVisible = settings.blockInstagramReels &&
+                result.surface == ContentSurface.INSTAGRAM_REELS,
+            settings = settings,
+            now = now
+        )
         val reelsShouldBlock = result.recommendedAction == InterventionAction.BLOCK_AND_RETURN &&
             isInstagramReelsSurface &&
             settings.blockInstagramReels &&
-            !friendReelAllowed
+            !friendReelAllowed &&
+            !reelsAllowanceActive
         val searchGridShouldBlock = result.recommendedAction == InterventionAction.BLOCK &&
             isSearchGridSurface &&
             settings.blockInstagramSearchGrid
@@ -506,7 +523,8 @@ class AccessibilityEventRouter(
             youtubeShortsAppShouldBlock ||
             settingsGuardShouldBlock ||
             protectedWebsiteShouldBlock ||
-            tikTokShortFormShouldBlock
+            tikTokShortFormShouldBlock ||
+            linkedInShortFormShouldBlock
         val homeFeedDetected = homeFeedClassification.state == InstagramHomeFeedState.HOME_FEED
         val clearNonHomeInstagramSurface = instagramIsActive && (
             homeFeedClassification.state == InstagramHomeFeedState.FOLLOWING_TAB ||
@@ -533,6 +551,8 @@ class AccessibilityEventRouter(
                 "searchGridShouldBlock" to searchGridShouldBlock,
                 "webShouldBlock" to webShouldBlock,
                 "settingsGuardShouldBlock" to settingsGuardShouldBlock,
+                "reelsAllowanceActive" to reelsAllowanceActive,
+                "linkedInShortFormShouldBlock" to linkedInShortFormShouldBlock,
                 "allowFriendYouTubeShorts" to allowFriendYouTubeShorts,
                 "enteredYouTubeFromExternal" to enteredYouTubeFromExternal,
                 "friendShortsScrollAttempt" to friendShortsScrollAttempt,
@@ -550,6 +570,7 @@ class AccessibilityEventRouter(
             isYouTubeShortsAppSurface -> "YouTube Shorts Blocked"
             isYouTubeShortsWebSurface -> "YouTube Shorts Blocked"
             isInstagramWebSurface -> "Instagram Website Blocked"
+            isLinkedInShortFormSurface -> "LinkedIn Video Blocked"
             isSearchGridSurface -> "Search Grid Blocked"
             else -> "Reels Blocked"
         }
@@ -560,6 +581,7 @@ class AccessibilityEventRouter(
             isYouTubeShortsAppSurface -> "The YouTube app remains available for everything else."
             isYouTubeShortsWebSurface -> "Long-form YouTube remains available."
             isInstagramWebSurface -> "Instagram web is blocked."
+            isLinkedInShortFormSurface -> "LinkedIn remains available without the short-video feed."
             isSearchGridSurface -> "You chose to keep this search space clear."
             else -> "You chose to keep this space clear."
         }
@@ -634,22 +656,62 @@ class AccessibilityEventRouter(
             return
         }
 
+        if (linkedInOverlayActive && !linkedInShortFormShouldBlock) {
+            val waitingForLinkedInBack = result.platform == Platform.LINKEDIN &&
+                linkedInBackIssued &&
+                linkedInBackPerformedAt == 0L
+            val linkedInNavigationSettling = result.platform == Platform.LINKEDIN &&
+                linkedInBackPerformedAt > 0L &&
+                now - linkedInBackPerformedAt < LINKEDIN_POST_BACK_HOLD_MS
+            if (waitingForLinkedInBack || linkedInNavigationSettling) {
+                linkedInOverlayController.showOrHold()
+                return
+            }
+            linkedInOverlayActive = false
+            linkedInBackIssued = false
+            linkedInBackPerformedAt = 0L
+            linkedInBackRequestId++
+            linkedInOverlayController.dismissImmediately()
+        }
+
+        if (linkedInShortFormShouldBlock) {
+            clearHomeFeedBlock()
+            clearInstagramWebBlock()
+            clearYouTubeWebBlock()
+            linkedInOverlayActive = true
+            linkedInOverlayController.showOrHold()
+            if (!linkedInBackIssued && now >= linkedInBackCooldownUntil) {
+                linkedInBackIssued = true
+                linkedInBackCooldownUntil = now + LINKEDIN_BACK_COOLDOWN_MS
+                val requestId = ++linkedInBackRequestId
+                linkedInOverlayController.runWhenCovered {
+                    if (
+                        linkedInOverlayActive &&
+                        linkedInBackIssued &&
+                        requestId == linkedInBackRequestId
+                    ) {
+                        linkedInBackPerformedAt = System.currentTimeMillis()
+                        performBack()
+                    }
+                }
+            }
+            return
+        }
+
         if (protectedWebsiteShouldBlock) {
+            val websiteApp = protectedWebsiteApp ?: return
             clearHomeFeedBlock()
             clearYouTubeWebBlock()
             clearFullScreenBlockState(immediateOverlayDismiss = true)
-            lastTotalWebsiteSurface = result.surface
-            lastInstagramWebBlockAt = now
-            instagramWebOverlayController.showOrUpdate(
+            clearInstagramWebBlock()
+            clearProtectedWebsiteBlocks(except = websiteApp)
+            activeProtectedWebsiteApp = websiteApp
+            protectedWebsiteOverlayControllers.getValue(websiteApp).showOrUpdate(
                 snapshot = snapshot,
-                onOpenSettings = onOpenSettings,
-                titleText = "${protectedWebsiteApp?.displayName ?: "Website"} Website Blocked",
-                bodyText = "This website is blocked by Unreel."
+                onOpenSettings = onOpenSettings
             )
-            instagramWebOverlayController.holdSolid()
+            protectedWebsiteOverlayControllers.getValue(websiteApp).holdSolid()
             return
-        } else if (result.surface != lastTotalWebsiteSurface) {
-            lastTotalWebsiteSurface = null
         }
 
         if ((reelsShouldBlock || searchGridShouldBlock) && settings.reverseFromReel) {
@@ -979,6 +1041,7 @@ class AccessibilityEventRouter(
     }
 
     private fun clearAllBlockers() {
+        finishInstagramReelsAllowanceSession()
         endShortFormExposure(System.currentTimeMillis())
         endScreenTimeExposure(System.currentTimeMillis())
         clearHomeFeedBlock()
@@ -986,9 +1049,71 @@ class AccessibilityEventRouter(
         clearYouTubeWebBlock()
         homeFeedSuppressedUntil = 0L
         settingsGuardActive = false
+        linkedInOverlayActive = false
+        linkedInBackIssued = false
+        linkedInBackPerformedAt = 0L
+        linkedInBackRequestId++
+        linkedInOverlayController.dismissImmediately()
+        clearProtectedWebsiteBlocks()
         tikTokOverlayController.dismissImmediately()
         tikTokAudioController.restore()
         clearFullScreenBlockState(immediateOverlayDismiss = true)
+    }
+
+    private fun updateInstagramReelsAllowance(
+        ordinaryReelIsVisible: Boolean,
+        settings: AppSettings,
+        now: Long
+    ): Boolean {
+        if (!settings.instagramReelsAllowanceEnabled || !ordinaryReelIsVisible) {
+            finishInstagramReelsAllowanceSession()
+            return false
+        }
+
+        val today = LocalDate.now().toString()
+        if (reelsAllowanceDate != today || reelsAllowanceLastTickAt == 0L) {
+            finishInstagramReelsAllowanceSession()
+            reelsAllowanceDate = today
+            val storedUsed = settings.instagramReelsAllowanceUsedToday(today)
+            reelsAllowanceLocalUsedMillis = if (reelsAllowanceKnownDate == today) {
+                maxOf(storedUsed, reelsAllowanceKnownUsedMillis)
+            } else {
+                storedUsed
+            }
+            reelsAllowancePersistedMillis = reelsAllowanceLocalUsedMillis
+            reelsAllowanceLastTickAt = now
+        } else {
+            reelsAllowanceLocalUsedMillis +=
+                (now - reelsAllowanceLastTickAt).coerceIn(0L, REELS_ALLOWANCE_MAX_EVENT_GAP_MS)
+            reelsAllowanceLastTickAt = now
+        }
+        reelsAllowanceKnownDate = today
+        reelsAllowanceKnownUsedMillis = reelsAllowanceLocalUsedMillis
+
+        val budgetMillis = settings.instagramReelsDailyAllowanceMinutes.coerceIn(1, 99) * 60_000L
+        if (
+            reelsAllowanceLocalUsedMillis >= budgetMillis ||
+            reelsAllowanceLocalUsedMillis - reelsAllowancePersistedMillis >= REELS_ALLOWANCE_PERSIST_INTERVAL_MS
+        ) {
+            persistInstagramReelsAllowanceProgress()
+        }
+        return reelsAllowanceLocalUsedMillis < budgetMillis
+    }
+
+    private fun finishInstagramReelsAllowanceSession() {
+        persistInstagramReelsAllowanceProgress()
+        reelsAllowanceDate = ""
+        reelsAllowanceLocalUsedMillis = 0L
+        reelsAllowancePersistedMillis = 0L
+        reelsAllowanceLastTickAt = 0L
+    }
+
+    private fun persistInstagramReelsAllowanceProgress() {
+        val delta = reelsAllowanceLocalUsedMillis - reelsAllowancePersistedMillis
+        if (reelsAllowanceDate.isNotBlank() && delta > 0L) {
+            onInstagramReelsAllowanceConsumed(reelsAllowanceDate, delta)
+            reelsAllowancePersistedMillis = reelsAllowanceLocalUsedMillis
+        }
     }
 
     private fun clearHomeFeedBlock() {
@@ -1000,6 +1125,21 @@ class AccessibilityEventRouter(
     private fun clearInstagramWebBlock() {
         instagramWebOverlayController.dismiss()
         lastInstagramWebBlockAt = 0L
+    }
+
+    private fun clearProtectedWebsiteBlocks(except: ProtectedApp? = null) {
+        protectedWebsiteOverlayControllers.forEach { (app, controller) ->
+            if (app != except) controller.dismissImmediately()
+        }
+        if (activeProtectedWebsiteApp != except) {
+            activeProtectedWebsiteApp = except
+        }
+    }
+
+    private fun holdActiveProtectedWebsiteBlock() {
+        activeProtectedWebsiteApp
+            ?.let(protectedWebsiteOverlayControllers::get)
+            ?.holdSolid()
     }
 
     private fun clearYouTubeWebBlock() {
@@ -1068,7 +1208,8 @@ class AccessibilityEventRouter(
             overlayShowing = overlayController.isShowing,
             homeFeedOverlayShowing = homeFeedOverlayController.isShowing,
             webOverlayShowing = instagramWebOverlayController.isShowing ||
-                youTubeShortsOverlayController.isShowing,
+                youTubeShortsOverlayController.isShowing ||
+                protectedWebsiteOverlayControllers.values.any { it.isShowing },
             extras = extras
         )
     }
@@ -1185,7 +1326,8 @@ class AccessibilityEventRouter(
             it == ContentSurface.INSTAGRAM_REELS ||
                 it == ContentSurface.INSTAGRAM_REELS_FROM_FRIEND ||
                 it == ContentSurface.INSTAGRAM_SEARCH_REELS_GRID ||
-                it == ContentSurface.YOUTUBE_SHORTS_WEB
+                it == ContentSurface.YOUTUBE_SHORTS_WEB ||
+                it == ContentSurface.LINKEDIN_SHORTFORM
         }
         if (trackedSurface == activeShortFormSurface) return
         endShortFormExposure(now)
@@ -1238,6 +1380,7 @@ class AccessibilityEventRouter(
             Platform.INSTAGRAM -> ScreenTimeCategory.INSTAGRAM_APP
             Platform.YOUTUBE -> ScreenTimeCategory.YOUTUBE_APP
             Platform.TIKTOK -> ScreenTimeCategory.TIKTOK_APP
+            Platform.LINKEDIN -> ScreenTimeCategory.LINKEDIN_APP
             else -> null
         }
     }
@@ -1397,6 +1540,10 @@ class AccessibilityEventRouter(
         const val YOUTUBE_FRIEND_ENTRY_WINDOW_MS = 10_000L
         const val YOUTUBE_FRIEND_SCROLL_ARM_DELAY_MS = 550L
         const val TOTAL_ACCESS_RETURN_COOLDOWN_MS = 650L
+        const val REELS_ALLOWANCE_PERSIST_INTERVAL_MS = 5_000L
+        const val REELS_ALLOWANCE_MAX_EVENT_GAP_MS = 10_000L
+        const val LINKEDIN_BACK_COOLDOWN_MS = 1_500L
+        const val LINKEDIN_POST_BACK_HOLD_MS = 300L
         val HOME_FEED_EXIT_NAVIGATION_ID_MARKERS = setOf(
             "action_bar_button_direct",
             "action_bar_inbox",

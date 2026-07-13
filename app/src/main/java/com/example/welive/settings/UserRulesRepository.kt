@@ -38,6 +38,7 @@ class UserRulesRepository(private val context: Context) {
         val BlockRedditWebsiteCompletely = booleanPreferencesKey("block_reddit_website_completely")
         val BlockLinkedInAppCompletely = booleanPreferencesKey("block_linkedin_app_completely")
         val BlockLinkedInWebsiteCompletely = booleanPreferencesKey("block_linkedin_website_completely")
+        val BlockLinkedInShortForm = booleanPreferencesKey("block_linkedin_short_form")
         val OnboardingCompleted = booleanPreferencesKey("onboarding_completed")
         val AverageWeeklyShortFormMinutes = intPreferencesKey("average_weekly_short_form_minutes")
         val OnboardingCompletedAtMillis = longPreferencesKey("onboarding_completed_at_millis")
@@ -68,6 +69,10 @@ class UserRulesRepository(private val context: Context) {
         val AllowInstagramStories = booleanPreferencesKey("allow_instagram_stories")
         val BlockInstagramSearchGrid = booleanPreferencesKey("block_instagram_search_grid")
         val AllowInstagramReelsFromFriends = booleanPreferencesKey("allow_instagram_reels_from_friends")
+        val InstagramReelsAllowanceEnabled = booleanPreferencesKey("instagram_reels_allowance_enabled")
+        val InstagramReelsDailyAllowanceMinutes = intPreferencesKey("instagram_reels_daily_allowance_minutes")
+        val InstagramReelsAllowanceDate = stringPreferencesKey("instagram_reels_allowance_date")
+        val InstagramReelsAllowanceUsedMillis = longPreferencesKey("instagram_reels_allowance_used_millis")
         val ReverseFromReel = booleanPreferencesKey("reverse_from_reel")
         val TemporaryAllowUntil = longPreferencesKey("temporary_allow_until")
     }
@@ -96,6 +101,7 @@ class UserRulesRepository(private val context: Context) {
             blockRedditWebsiteCompletely = preferences[Keys.BlockRedditWebsiteCompletely] ?: false,
             blockLinkedInAppCompletely = preferences[Keys.BlockLinkedInAppCompletely] ?: false,
             blockLinkedInWebsiteCompletely = preferences[Keys.BlockLinkedInWebsiteCompletely] ?: false,
+            blockLinkedInShortForm = preferences[Keys.BlockLinkedInShortForm] ?: false,
             onboardingCompleted = preferences[Keys.OnboardingCompleted] ?: false,
             averageWeeklyShortFormMinutes = preferences[Keys.AverageWeeklyShortFormMinutes] ?: 0,
             onboardingCompletedAtMillis = preferences[Keys.OnboardingCompletedAtMillis] ?: 0L,
@@ -129,6 +135,11 @@ class UserRulesRepository(private val context: Context) {
             allowInstagramStories = preferences[Keys.AllowInstagramStories] ?: true,
             blockInstagramSearchGrid = preferences[Keys.BlockInstagramSearchGrid] ?: false,
             allowInstagramReelsFromFriends = preferences[Keys.AllowInstagramReelsFromFriends] ?: false,
+            instagramReelsAllowanceEnabled = preferences[Keys.InstagramReelsAllowanceEnabled] ?: false,
+            instagramReelsDailyAllowanceMinutes =
+                (preferences[Keys.InstagramReelsDailyAllowanceMinutes] ?: 5).coerceIn(1, 99),
+            instagramReelsAllowanceDate = preferences[Keys.InstagramReelsAllowanceDate] ?: "",
+            instagramReelsAllowanceUsedMillis = preferences[Keys.InstagramReelsAllowanceUsedMillis] ?: 0L,
             reverseFromReel = preferences[Keys.ReverseFromReel] ?: true,
             temporaryAllowUntil = preferences[Keys.TemporaryAllowUntil] ?: 0L
         )
@@ -176,6 +187,15 @@ class UserRulesRepository(private val context: Context) {
             it[Keys.BlockTikTokShortForm] = enabled
             if (enabled) {
                 it[Keys.BlockTikTokAppCompletely] = false
+            }
+        }
+    }
+
+    suspend fun setBlockLinkedInShortForm(enabled: Boolean) {
+        context.weLiveDataStore.edit {
+            it[Keys.BlockLinkedInShortForm] = enabled
+            if (enabled) {
+                it[Keys.BlockLinkedInAppCompletely] = false
             }
         }
     }
@@ -382,6 +402,30 @@ class UserRulesRepository(private val context: Context) {
 
     suspend fun setAllowInstagramReelsFromFriends(enabled: Boolean) {
         context.weLiveDataStore.edit { it[Keys.AllowInstagramReelsFromFriends] = enabled }
+    }
+
+    suspend fun setInstagramReelsAllowanceEnabled(enabled: Boolean) {
+        context.weLiveDataStore.edit { it[Keys.InstagramReelsAllowanceEnabled] = enabled }
+    }
+
+    suspend fun setInstagramReelsDailyAllowanceMinutes(minutes: Int) {
+        context.weLiveDataStore.edit {
+            it[Keys.InstagramReelsDailyAllowanceMinutes] = minutes.coerceIn(1, 99)
+        }
+    }
+
+    suspend fun addInstagramReelsAllowanceUsage(dateKey: String, durationMillis: Long) {
+        if (durationMillis <= 0L) return
+        context.weLiveDataStore.edit { preferences ->
+            val existing = if (preferences[Keys.InstagramReelsAllowanceDate] == dateKey) {
+                preferences[Keys.InstagramReelsAllowanceUsedMillis] ?: 0L
+            } else {
+                0L
+            }
+            preferences[Keys.InstagramReelsAllowanceDate] = dateKey
+            preferences[Keys.InstagramReelsAllowanceUsedMillis] =
+                existing + durationMillis.coerceAtMost(MAX_EXPOSURE_SESSION_MILLIS)
+        }
     }
 
     suspend fun setReverseFromReel(enabled: Boolean) {

@@ -18,7 +18,7 @@ class SettingsUninstallDetector(
             !SettingsPackageConfig.isSupported(snapshot.rootPackageName) &&
             !SettingsPackageConfig.isSupported(snapshot.eventPackageName)
         ) {
-            return unknown(snapshot, "Package is not Settings or package installer")
+            return unknown(snapshot, "Package is not an uninstall or Settings host")
         }
 
         val reasons = mutableListOf<String>()
@@ -28,12 +28,14 @@ class SettingsUninstallDetector(
             snapshot.eventPackageName
         ).map { it.lowercase() }
         val isPackageInstaller = packageNames.any { packageName ->
-            packageName.contains("packageinstaller")
+            packageName.contains("packageinstaller") ||
+                packageName.contains("permissioncontroller")
         }
         val isSettingsAppInfoHost = packageNames.any { packageName ->
             packageName == "com.android.settings" ||
                 packageName == "com.samsung.android.settings"
         }
+        val isPlayStore = packageNames.any { it == "com.android.vending" }
         val nameHit = snapshot.containsTextOrDescriptionAny(appName)
         val packageHit = snapshot.containsAny(packageName)
         val appMarkerHit = nameHit || packageHit
@@ -80,9 +82,13 @@ class SettingsUninstallDetector(
         val settingsActionBarIdHit = snapshot.containsViewIdAny(
             "com.android.settings:id/action_bar"
         )
+        val playStoreDetailsHit = snapshot.containsViewIdAny(
+            "details", "hero", "title", "uninstall"
+        ) || snapshot.containsTextOrDescriptionAny("open")
 
         if (isPackageInstaller) reasons += "Package installer is active"
         if (isSettingsAppInfoHost) reasons += "Settings app-info host is active"
+        if (isPlayStore) reasons += "Google Play app-details host is active"
         if (nameHit) reasons += "Unreel app marker is visible"
         if (packageHit) reasons += "Unreel package marker is visible"
         if (uninstallTextHit) reasons += "Uninstall action text is visible"
@@ -96,6 +102,7 @@ class SettingsUninstallDetector(
         if (accessibilityDetailTextHit) reasons += "Accessibility service detail text is visible"
         if (accessibilitySwitchbarIdHit) reasons += "Accessibility service switchbar ids are visible"
         if (settingsActionBarIdHit) reasons += "Settings action bar id is visible"
+        if (playStoreDetailsHit) reasons += "Google Play app-details markers are visible"
 
         val packageInstallerUninstallConfirmation = isPackageInstaller &&
             appMarkerHit &&
@@ -118,10 +125,17 @@ class SettingsUninstallDetector(
             settingsActionBarIdHit &&
             (accessibilityDetailTextHit || snapshot.containsTextOrDescriptionAny("instagram reels"))
 
+        val unreelPlayStoreUninstallSurface = isPlayStore &&
+            appMarkerHit &&
+            uninstallTextHit &&
+            playStoreDetailsHit &&
+            (cancelActionHit || snapshot.containsTextOrDescriptionAny("open"))
+
         val confidence = when {
             packageInstallerUninstallConfirmation -> 0.99f
             unreelSettingsAppInfoUninstallPage -> 0.97f
             unreelAccessibilityServicePermissionPage -> 0.98f
+            unreelPlayStoreUninstallSurface -> 0.98f
             else -> 0f
         }
 

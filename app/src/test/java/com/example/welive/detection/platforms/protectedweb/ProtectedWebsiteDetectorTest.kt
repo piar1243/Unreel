@@ -62,7 +62,7 @@ class ProtectedWebsiteDetectorTest {
     fun typedAddressIsNeverBlocked() {
         val result = detector.detect(browserSnapshot("reddit.com", focused = true))
 
-        assertEquals(ContentSurface.UNKNOWN, result.surface)
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_ADDRESS_ENTRY, result.surface)
         assertEquals(InterventionAction.NONE, result.recommendedAction)
     }
 
@@ -70,7 +70,51 @@ class ProtectedWebsiteDetectorTest {
     fun lookalikeDomainIsNotBlocked() {
         val result = detector.detect(browserSnapshot("https://notreddit.com", focused = false))
 
-        assertEquals(ContentSurface.UNKNOWN, result.surface)
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_SAFE, result.surface)
+        assertEquals(InterventionAction.NONE, result.recommendedAction)
+    }
+
+    @Test
+    fun linkedInWebViewTitleIsDetectedWhenBrowserHidesToolbar() {
+        val webView = WindowNodeFeature(
+            text = "LinkedIn Login, Sign in | LinkedIn",
+            contentDescription = null,
+            viewId = null,
+            className = "android.webkit.WebView",
+            isClickable = false,
+            isScrollable = false,
+            isVisibleToUser = true,
+            boundsLeft = 0,
+            boundsTop = 200,
+            boundsRight = 1080,
+            boundsBottom = 2200
+        )
+
+        val result = detector.detect(browserSnapshot(listOf(webView)))
+
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_LINKEDIN, result.surface)
+        assertEquals(InterventionAction.BLOCK_AND_RETURN, result.recommendedAction)
+    }
+
+    @Test
+    fun tikTokWebViewTitleIsDetectedWhenBrowserHidesToolbar() {
+        val webView = WindowNodeFeature(
+            text = "TikTok - Make Your Day",
+            contentDescription = null,
+            viewId = null,
+            className = "android.webkit.WebView",
+            isClickable = false,
+            isScrollable = false,
+            isVisibleToUser = true,
+            boundsLeft = 0,
+            boundsTop = 100,
+            boundsRight = 1080,
+            boundsBottom = 2300
+        )
+
+        val result = detector.detect(browserSnapshot(listOf(webView)))
+
+        assertEquals(ContentSurface.PROTECTED_WEBSITE_TIKTOK, result.surface)
     }
 
     private fun browserSnapshot(url: String, focused: Boolean): WindowSnapshot {

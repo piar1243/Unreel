@@ -27,6 +27,7 @@ data class AppSettings(
     val blockRedditWebsiteCompletely: Boolean = false,
     val blockLinkedInAppCompletely: Boolean = false,
     val blockLinkedInWebsiteCompletely: Boolean = false,
+    val blockLinkedInShortForm: Boolean = false,
     val onboardingCompleted: Boolean = false,
     val averageWeeklyShortFormMinutes: Int = 0,
     val onboardingCompletedAtMillis: Long = 0L,
@@ -57,6 +58,10 @@ data class AppSettings(
     val allowInstagramStories: Boolean = true,
     val blockInstagramSearchGrid: Boolean = true,
     val allowInstagramReelsFromFriends: Boolean = true,
+    val instagramReelsAllowanceEnabled: Boolean = false,
+    val instagramReelsDailyAllowanceMinutes: Int = 5,
+    val instagramReelsAllowanceDate: String = "",
+    val instagramReelsAllowanceUsedMillis: Long = 0L,
     val reverseFromReel: Boolean = true,
     val temporaryAllowUntil: Long = 0L
 ) {
@@ -103,6 +108,19 @@ data class AppSettings(
 
     fun instagramOpensToday(todayKey: String = LocalDate.now().toString()): Int {
         return if (instagramOpenCountDate == todayKey) instagramOpenCount else 0
+    }
+
+    fun instagramReelsAllowanceUsedToday(todayKey: String = LocalDate.now().toString()): Long {
+        return if (instagramReelsAllowanceDate == todayKey) {
+            instagramReelsAllowanceUsedMillis.coerceAtLeast(0L)
+        } else {
+            0L
+        }
+    }
+
+    fun instagramReelsAllowanceRemainingMillis(todayKey: String = LocalDate.now().toString()): Long {
+        val budget = instagramReelsDailyAllowanceMinutes.coerceIn(1, 99) * 60_000L
+        return (budget - instagramReelsAllowanceUsedToday(todayKey)).coerceAtLeast(0L)
     }
 
     fun hasInstagramOpensRemaining(todayKey: String = LocalDate.now().toString()): Boolean {

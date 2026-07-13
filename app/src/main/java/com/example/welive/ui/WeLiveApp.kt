@@ -346,6 +346,12 @@ fun WeLiveApp() {
                         onBlockReelsChange = { enabled ->
                             scope.launch { repository.setBlockInstagramReels(enabled) }
                         },
+                        onInstagramReelsAllowanceEnabledChange = { enabled ->
+                            scope.launch { repository.setInstagramReelsAllowanceEnabled(enabled) }
+                        },
+                        onInstagramReelsAllowanceMinutesChange = { minutes ->
+                            scope.launch { repository.setInstagramReelsDailyAllowanceMinutes(minutes) }
+                        },
                         onBlockYouTubeShortsWebsiteChange = { enabled ->
                             scope.launch { repository.setBlockYouTubeShortsWebsite(enabled) }
                         },
@@ -390,6 +396,9 @@ fun WeLiveApp() {
                         },
                         onBlockTikTokShortFormChange = { enabled ->
                             scope.launch { repository.setBlockTikTokShortForm(enabled) }
+                        },
+                        onBlockLinkedInShortFormChange = { enabled ->
+                            scope.launch { repository.setBlockLinkedInShortForm(enabled) }
                         },
                         openLimitResetCountdown = openLimitResetCountdown
                     )
@@ -1600,6 +1609,8 @@ private fun ProtectedAppsPanel(
     onTotalAppBlockChange: (ProtectedApp, Boolean) -> Unit,
     onTotalWebsiteBlockChange: (ProtectedApp, Boolean) -> Unit,
     onBlockReelsChange: (Boolean) -> Unit,
+    onInstagramReelsAllowanceEnabledChange: (Boolean) -> Unit,
+    onInstagramReelsAllowanceMinutesChange: (Int) -> Unit,
     onBlockYouTubeShortsWebsiteChange: (Boolean) -> Unit,
     onAllowYouTubeFriendShortsChange: (Boolean) -> Unit,
     onBlockYouTubeShortsInAppChange: (Boolean) -> Unit,
@@ -1615,6 +1626,7 @@ private fun ProtectedAppsPanel(
     onAllowFriendReelsChange: (Boolean) -> Unit,
     onReverseFromReelChange: (Boolean) -> Unit,
     onBlockTikTokShortFormChange: (Boolean) -> Unit,
+    onBlockLinkedInShortFormChange: (Boolean) -> Unit,
     openLimitResetCountdown: String
 ) {
     val context = LocalContext.current
@@ -1716,6 +1728,24 @@ private fun ProtectedAppsPanel(
                     when (app) {
                         ProtectedApp.INSTAGRAM -> {
                             ToggleRow("Block Reels", "High-confidence Reels detector", settings.blockInstagramReels, SignalGreen, onBlockReelsChange)
+                            ToggleRow(
+                                "Daily Reels allowance",
+                                "Use a timed Reel window before blocking; resets at local midnight",
+                                settings.instagramReelsAllowanceEnabled,
+                                SignalCyan,
+                                onInstagramReelsAllowanceEnabledChange
+                            )
+                            if (settings.instagramReelsAllowanceEnabled) {
+                                val remainingMinutes =
+                                    ((settings.instagramReelsAllowanceRemainingMillis() + 59_999L) / 60_000L).toInt()
+                                StepperRow(
+                                    "Allowance minutes",
+                                    "$remainingMinutes min remaining today",
+                                    settings.instagramReelsDailyAllowanceMinutes,
+                                    SignalCyan,
+                                    onInstagramReelsAllowanceMinutesChange
+                                )
+                            }
                             ToggleRow("Block Home Feed", "Stories and navigation remain available", settings.blockInstagramHomeFeed, SignalGreen, onBlockHomeFeedChange)
                             ToggleRow("Block Home Stories", "Covers stories with the feed", settings.blockInstagramHomeStories, SignalRed, onBlockHomeStoriesChange)
                             ToggleRow("Block Search Grid", "Blocks the mini-Reels explore grid", settings.blockInstagramSearchGrid, SignalRed, onBlockSearchGridChange)
@@ -1768,6 +1798,15 @@ private fun ProtectedAppsPanel(
                                 settings.blockTikTokShortForm,
                                 SignalGreen,
                                 onBlockTikTokShortFormChange
+                            )
+                        }
+                        ProtectedApp.LINKEDIN -> {
+                            ToggleRow(
+                                "Block short videos",
+                                "Blocks LinkedIn's immersive vertical-video feed",
+                                settings.blockLinkedInShortForm,
+                                SignalCyan,
+                                onBlockLinkedInShortFormChange
                             )
                         }
                         else -> Unit
@@ -1868,6 +1907,7 @@ private fun protectedAppSummary(app: ProtectedApp, settings: AppSettings): Strin
     app == ProtectedApp.INSTAGRAM -> "Reels and feed controls"
     app == ProtectedApp.YOUTUBE -> "Shorts and app controls"
     app == ProtectedApp.TIKTOK && settings.blockTikTokShortForm -> "Messages-only protection"
+    app == ProtectedApp.LINKEDIN && settings.blockLinkedInShortForm -> "Short-video protection"
     else -> "Protection ready"
 }
 

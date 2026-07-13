@@ -55,6 +55,39 @@ class SettingsUninstallDetectorTest {
     }
 
     @Test
+    fun blocksPlayStoreUninstallSurfaceForUnreel() {
+        val result = detector.detect(
+            snapshot(
+                packageName = "com.android.vending",
+                texts = setOf("Unreel", "Uninstall", "Open"),
+                descriptions = setOf("Uninstall Unreel"),
+                viewIds = setOf(
+                    "com.android.vending:id/details_title",
+                    "com.android.vending:id/uninstall_button"
+                )
+            )
+        )
+
+        assertEquals(ContentSurface.SETTINGS_UNINSTALL_UNREEL, result.surface)
+        assertEquals(InterventionAction.BLOCK_AND_RETURN, result.recommendedAction)
+        assertTrue(result.confidence >= 0.98f)
+    }
+
+    @Test
+    fun ignoresPlayStorePageForAnotherApp() {
+        val result = detector.detect(
+            snapshot(
+                packageName = "com.android.vending",
+                texts = setOf("Another app", "Uninstall", "Open"),
+                viewIds = setOf("com.android.vending:id/uninstall_button")
+            )
+        )
+
+        assertEquals(ContentSurface.SETTINGS_SAFE, result.surface)
+        assertEquals(InterventionAction.NONE, result.recommendedAction)
+    }
+
+    @Test
     fun blocksUnreelAccessibilityServiceDetailSwitchPage() {
         val result = detector.detect(
             snapshot(

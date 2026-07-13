@@ -17,6 +17,10 @@ class InstagramHomeFeedRegionResolverTest {
             feature("com.instagram.android:id/outer_container", top = 170, bottom = 420),
             feature("com.instagram.android:id/row_feed_photo_imageview", top = 450, bottom = 1700),
             feature("com.instagram.android:id/feed_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/search_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/clips_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/direct_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/profile_tab", top = 2200, bottom = 2400),
             feature(
                 viewId = "com.instagram.android:id/offscreen_page",
                 left = 1080,
@@ -31,6 +35,27 @@ class InstagramHomeFeedRegionResolverTest {
         assertNotNull(overlayRegion)
         assertEquals(1080, overlayRegion?.right)
         assertEquals(2400, overlayRegion?.bottom)
+    }
+
+    @Test
+    fun feedCardsDoNotMoveStableBlockerEdges() {
+        val common = arrayOf(
+            feature("com.instagram.android:id/title_logo", bottom = 150),
+            feature("com.instagram.android:id/cf_hub_recycler_view", top = 150, bottom = 430),
+            feature("com.instagram.android:id/feed_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/search_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/clips_tab", top = 2200, bottom = 2400),
+            feature("com.instagram.android:id/profile_tab", top = 2200, bottom = 2400)
+        )
+        val ordinaryFeed = resolver.resolveBlockerRegion(
+            snapshot(*common, feature("com.instagram.android:id/row_feed_photo_imageview", top = 450, bottom = 1700))
+        )
+        val suggestedFeed = resolver.resolveBlockerRegion(
+            snapshot(*common, feature("com.instagram.android:id/row_feed_photo_imageview", top = 900, bottom = 1500))
+        )
+
+        assertNotNull(ordinaryFeed)
+        assertEquals(ordinaryFeed, suggestedFeed)
     }
 
     private fun snapshot(vararg features: WindowNodeFeature): WindowSnapshot {

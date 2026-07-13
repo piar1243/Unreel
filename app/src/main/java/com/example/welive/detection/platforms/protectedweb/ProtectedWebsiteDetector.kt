@@ -16,22 +16,32 @@ class ProtectedWebsiteDetector : ContentDetector {
             .any(BrowserPackageConfig::isSupported)
         if (!browserActive) return unknown(snapshot, "A supported browser is not active")
         if (snapshot.nodeFeatures.any { it.isActiveBrowserInput() }) {
-            return unknown(snapshot, "Browser address entry is active")
+            return browserState(snapshot, ContentSurface.PROTECTED_WEBSITE_ADDRESS_ENTRY, "Browser address entry is active")
         }
 
         val protectedApps = ProtectedApp.entries.filterNot { it == ProtectedApp.INSTAGRAM }
-        val match = snapshot.nodeFeatures
+        val loadedAddresses = snapshot.nodeFeatures
             .asSequence()
             .filter { it.isVisibleToUser && it.looksLikeLoadedAddress(snapshot) }
             .map { it.combinedText() }
+            .toList()
+        val addressMatch = loadedAddresses
+            .asSequence()
             .mapNotNull { address ->
                 protectedApps.firstOrNull { candidate ->
                     candidate.domains.any { domain -> address.containsDomain(domain) }
                 }?.let { app -> app to address }
             }
             .firstOrNull()
-            ?: return unknown(snapshot, "No loaded browser address is exposed")
-        val app = match.first
+        val pageTitleMatch = snapshot.brandedWebViewApp()
+        val app = addressMatch?.first ?: pageTitleMatch
+        if (app == null) {
+            return if (loadedAddresses.isNotEmpty()) {
+                browserState(snapshot, ContentSurface.PROTECTED_WEBSITE_SAFE, "Loaded address is not protected")
+            } else {
+                unknown(snapshot, "No loaded browser address or protected page title is exposed")
+            }
+        }
 
         return DetectionResult(
             platform = Platform.PROTECTED_WEB,
@@ -47,7 +57,13 @@ class ProtectedWebsiteDetector : ContentDetector {
             },
             confidence = 0.99f,
             packageName = snapshot.packageName,
-            reasons = listOf("Loaded browser address belongs to ${app.displayName}"),
+            reasons = listOf(
+                if (addressMatch != null) {
+                    "Loaded browser address belongs to ${app.displayName}"
+                } else {
+                    "Browser WebView title belongs to ${app.displayName}"
+                }
+            ),
             recommendedAction = InterventionAction.BLOCK_AND_RETURN
         )
     }
@@ -74,6 +90,19 @@ class ProtectedWebsiteDetector : ContentDetector {
         return isFocused && isBrowserAddressInput()
     }
 
+    private fun WindowSnapshot.brandedWebViewApp(): ProtectedApp? {
+        val titles = nodeFeatures
+            .asSequence()
+            .filter { it.isVisibleToUser && it.className?.contains("WebView", true) == true }
+            .map { it.combinedText().trim() }
+            .toList()
+        return when {
+            titles.any { it.startsWith("tiktok") || it.endsWith("| tiktok") } -> ProtectedApp.TIKTOK
+            titles.any { it.startsWith("linkedin") || it.endsWith("| linkedin") } -> ProtectedApp.LINKEDIN
+            else -> null
+        }
+    }
+
     private fun WindowNodeFeature.combinedText(): String {
         return listOfNotNull(text, contentDescription, viewId).joinToString(" ").lowercase()
     }
@@ -86,6 +115,19 @@ class ProtectedWebsiteDetector : ContentDetector {
         platform = Platform.UNKNOWN,
         surface = ContentSurface.UNKNOWN,
         confidence = 0f,
+        packageName = snapshot.packageName,
+        reasons = listOf(reason),
+        recommendedAction = InterventionAction.NONE
+    )
+
+    private fun browserState(
+        snapshot: WindowSnapshot,
+        surface: ContentSurface,
+        reason: String
+    ) = DetectionResult(
+        platform = Platform.PROTECTED_WEB,
+        surface = surface,
+        confidence = 1f,
         packageName = snapshot.packageName,
         reasons = listOf(reason),
         recommendedAction = InterventionAction.NONE

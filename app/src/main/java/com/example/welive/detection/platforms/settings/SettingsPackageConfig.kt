@@ -9,7 +9,8 @@ object SettingsPackageConfig {
         "com.samsung.android.packageinstaller",
         "com.android.permissioncontroller",
         "com.google.android.permissioncontroller",
-        "com.samsung.android.permissioncontroller"
+        "com.samsung.android.permissioncontroller",
+        "com.android.vending"
     )
 
     private val supportedPackageFragments = setOf(
